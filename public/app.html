@@ -1,0 +1,1133 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fleet Bridge</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root { --bg: #0f172a; --bg2: #1e293b; --bg3: #243044; --border: rgba(148,163,184,0.12); --text: #f1f5f9; --muted: #64748b; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; display: flex; height: 100vh; overflow: hidden; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+
+    /* SIDEBAR */
+    #sidebar { width: 240px; min-width: 240px; background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; height: 100vh; transition: width 0.3s, transform 0.3s; z-index: 50; }
+    #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    #topbar { height: 52px; min-height: 52px; background: rgba(15,23,42,0.9); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 20px; gap: 12px; }
+    #content { flex: 1; overflow-y: auto; padding: 20px; }
+
+    /* CARDS */
+    .card { background: var(--bg3); border: 1px solid var(--border); border-radius: 14px; }
+    .card-hover:hover { border-color: rgba(59,130,246,0.35); transition: border-color 0.2s; }
+
+    /* NAV */
+    .nav-link { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-radius: 10px; color: var(--muted); font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s; text-decoration: none; white-space: nowrap; }
+    .nav-link:hover { background: rgba(59,130,246,0.1); color: #cbd5e1; }
+    .nav-link.active { background: rgba(59,130,246,0.18); color: #60a5fa; }
+    .nav-link i { width: 16px; text-align: center; font-size: 13px; }
+    .nav-section { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; color: #334155; text-transform: uppercase; padding: 10px 14px 4px; }
+
+    /* BTNS */
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; border: none; transition: all 0.15s; }
+    .btn-blue { background: #2563eb; color: white; }
+    .btn-blue:hover { background: #1d4ed8; }
+    .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+    .btn-ghost:hover { color: var(--text); border-color: #475569; }
+    .btn-red { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.25); }
+
+    /* BADGES */
+    .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .badge-green { background: rgba(16,185,129,0.15); color: #34d399; }
+    .badge-yellow { background: rgba(245,158,11,0.15); color: #fbbf24; }
+    .badge-red { background: rgba(239,68,68,0.15); color: #f87171; }
+    .badge-blue { background: rgba(59,130,246,0.15); color: #60a5fa; }
+    .badge-gray { background: rgba(100,116,139,0.2); color: #94a3b8; }
+
+    /* SECTIONS */
+    .section { display: none; }
+    .section.active { display: block; }
+
+    /* TABLE */
+    .tbl { width: 100%; border-collapse: collapse; }
+    .tbl th { text-align: left; padding: 10px 14px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border); }
+    .tbl td { padding: 11px 14px; font-size: 13px; border-bottom: 1px solid rgba(30,41,59,0.8); }
+    .tbl tr:hover td { background: rgba(59,130,246,0.04); }
+    .tbl tr:last-child td { border-bottom: none; }
+
+    /* RISK BAR */
+    .risk-bar-wrap { background: rgba(15,23,42,0.8); border-radius: 3px; height: 5px; width: 80px; display: inline-block; vertical-align: middle; }
+    .risk-bar-fill { height: 5px; border-radius: 3px; }
+
+    /* MODAL */
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65); backdrop-filter: blur(4px); z-index: 200; align-items: center; justify-content: center; }
+    .modal-overlay.open { display: flex; }
+    .modal-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 18px; padding: 24px; width: 90%; max-width: 500px; max-height: 90vh; overflow-y: auto; }
+
+    /* INPUT */
+    .inp { background: rgba(15,23,42,0.6); border: 1px solid var(--border); border-radius: 9px; padding: 9px 12px; color: var(--text); font-size: 13px; width: 100%; outline: none; transition: border-color 0.2s; }
+    .inp:focus { border-color: #3b82f6; }
+
+    /* TOAST */
+    #toast { position: fixed; bottom: 20px; right: 20px; z-index: 999; padding: 12px 18px; border-radius: 12px; font-size: 13px; font-weight: 600; backdrop-filter: blur(10px); box-shadow: 0 8px 32px rgba(0,0,0,0.4); transition: all 0.3s; transform: translateY(0); border: 1px solid; display: none; max-width: 350px; }
+
+    /* LOADER */
+    .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid rgba(59,130,246,0.3); border-top-color: #3b82f6; border-radius: 50%; animation: spin 0.7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* MAP */
+    #mapContainer { height: calc(100vh - 120px); border-radius: 14px; overflow: hidden; }
+    .leaflet-container { background: #1e293b !important; }
+    .leaflet-tile-pane { filter: brightness(0.85) saturate(0.8); }
+    .map-marker { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 2.5px solid rgba(255,255,255,0.8); box-shadow: 0 3px 10px rgba(0,0,0,0.5); cursor: pointer; font-size: 13px; }
+    .map-popup { background: #1e293b; color: #f1f5f9; border-radius: 10px; padding: 12px; min-width: 190px; border: 1px solid rgba(148,163,184,0.2); font-size: 12px; line-height: 1.6; }
+    .leaflet-popup-content-wrapper { background: transparent !important; box-shadow: none !important; border-radius: 0 !important; padding: 0 !important; }
+    .leaflet-popup-content { margin: 0 !important; }
+    .leaflet-popup-tip { display: none; }
+
+    /* TIMELINE */
+    .tl-item { display: flex; gap: 10px; padding: 7px 0; position: relative; }
+    .tl-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; border: 2px solid; }
+    .tl-line { position: absolute; left: 4px; top: 18px; bottom: -7px; width: 1px; background: var(--border); }
+
+    /* KPI */
+    .kpi-card { border-radius: 14px; padding: 18px; overflow: hidden; position: relative; border: 1px solid var(--border); }
+
+    /* STATUS DOT */
+    .dot-online { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 6px rgba(16,185,129,0.6); animation: blink 2s infinite; display: inline-block; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+    @media (max-width: 768px) {
+      #sidebar { position: fixed; transform: translateX(-100%); }
+      #sidebar.open { transform: translateX(0); box-shadow: 4px 0 20px rgba(0,0,0,0.5); }
+      #main { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<nav id="sidebar">
+  <div style="padding:16px; border-bottom:1px solid var(--border);">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div style="width:36px;height:36px;background:linear-gradient(135deg,#3b82f6,#6366f1);border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        <i class="fas fa-route" style="color:white;font-size:14px;"></i>
+      </div>
+      <div>
+        <div style="font-weight:700;font-size:14px;color:white;">Fleet Bridge</div>
+        <div id="sb-empresa" style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px;">Carregando...</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex:1;overflow-y:auto;padding:8px 6px;">
+    <div class="nav-section">Principal</div>
+    <a class="nav-link active" data-section="torre" onclick="navTo('torre',this)">
+      <i class="fas fa-tower-observation"></i> Torre de Controle
+      <span id="nb-alertas" style="display:none;margin-left:auto;background:#ef4444;color:white;font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;"></span>
+    </a>
+    <a class="nav-link" data-section="mapa" onclick="navTo('mapa',this)">
+      <i class="fas fa-map-marked-alt"></i> Mapa ao Vivo
+    </a>
+    <a class="nav-link" data-section="indicadores" onclick="navTo('indicadores',this)">
+      <i class="fas fa-chart-bar"></i> Indicadores do Dia
+    </a>
+    <div class="nav-section" style="margin-top:8px;">Análise</div>
+    <a class="nav-link" data-section="ranking" onclick="navTo('ranking',this)">
+      <i class="fas fa-trophy"></i> Rankings
+    </a>
+    <a class="nav-link" data-section="frota" onclick="navTo('frota',this)">
+      <i class="fas fa-car"></i> Frota
+    </a>
+    <div class="nav-section" style="margin-top:8px;">Sistema</div>
+    <a class="nav-link" data-section="config" onclick="navTo('config',this)">
+      <i class="fas fa-cog"></i> Configurações
+    </a>
+    <a class="nav-link" data-section="logs" onclick="navTo('logs',this)">
+      <i class="fas fa-terminal"></i> Logs de Coleta
+    </a>
+  </div>
+
+  <div style="padding:12px;border-top:1px solid var(--border);">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <div style="width:30px;height:30px;background:#334155;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        <i class="fas fa-user" style="color:#94a3b8;font-size:11px;"></i>
+      </div>
+      <div style="flex:1;min-width:0;">
+        <div id="sb-user" style="font-size:12px;font-weight:600;color:#cbd5e1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">...</div>
+        <div id="sb-perfil" style="font-size:10px;color:var(--muted);">...</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+      <div id="coleta-status" style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);">
+        <div id="dot-coleta" style="width:7px;height:7px;border-radius:50%;background:#475569;"></div>
+        <span id="txt-coleta">Aguardando</span>
+      </div>
+      <button onclick="doLogout()" class="btn btn-ghost" style="padding:4px 10px;font-size:11px;">
+        <i class="fas fa-sign-out-alt"></i> Sair
+      </button>
+    </div>
+  </div>
+</nav>
+
+<!-- MAIN -->
+<div id="main">
+  <!-- TOPBAR -->
+  <div id="topbar">
+    <button id="btn-menu" onclick="toggleSidebar()" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:4px;display:none;">
+      <i class="fas fa-bars" style="font-size:16px;"></i>
+    </button>
+    <h1 id="page-title" style="font-size:14px;font-weight:600;color:white;">Torre de Controle</h1>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
+      <span id="last-sync" style="font-size:11px;color:var(--muted);display:none;">Atualizado agora</span>
+      <button onclick="doAtualizar()" class="btn btn-blue" id="btn-atualizar">
+        <i class="fas fa-sync-alt" id="sync-icon"></i> Atualizar
+      </button>
+      <button onclick="openModal('modal-connect')" class="btn btn-ghost">
+        <i class="fas fa-plug"></i> <span class="hide-sm">Conectar</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- CONTENT -->
+  <div id="content">
+
+    <!-- =========================================================
+    TORRE DE CONTROLE
+    ========================================================= -->
+    <div class="section active" id="sec-torre">
+      <!-- KPIs -->
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px;" id="kpi-grid">
+        <div class="kpi-card" style="background:linear-gradient(135deg,#1e293b,#1e3a5f);">
+          <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:12px;">
+            <span style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.05em;">Total Veículos</span>
+            <div style="width:32px;height:32px;background:rgba(59,130,246,0.2);border-radius:8px;display:flex;align-items:center;justify-content:center;">
+              <i class="fas fa-car" style="color:#60a5fa;font-size:12px;"></i>
+            </div>
+          </div>
+          <div id="kpi-total" style="font-size:32px;font-weight:800;color:white;line-height:1;">—</div>
+          <div style="font-size:11px;color:#64748b;margin-top:4px;">frota cadastrada</div>
+        </div>
+        <div class="kpi-card" style="background:linear-gradient(135deg,#1e293b,#052e16);">
+          <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:12px;">
+            <span style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.05em;">Online Agora</span>
+            <div style="width:32px;height:32px;background:rgba(16,185,129,0.2);border-radius:8px;display:flex;align-items:center;justify-content:center;">
+              <i class="fas fa-signal" style="color:#34d399;font-size:12px;"></i>
+            </div>
+          </div>
+          <div id="kpi-online" style="font-size:32px;font-weight:800;color:#34d399;line-height:1;">—</div>
+          <div id="kpi-online-pct" style="font-size:11px;color:#64748b;margin-top:4px;">transmitindo</div>
+        </div>
+        <div class="kpi-card" style="background:linear-gradient(135deg,#1e293b,#2d1515);">
+          <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:12px;">
+            <span style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.05em;">Em Risco</span>
+            <div style="width:32px;height:32px;background:rgba(239,68,68,0.2);border-radius:8px;display:flex;align-items:center;justify-content:center;">
+              <i class="fas fa-exclamation-triangle" style="color:#f87171;font-size:12px;"></i>
+            </div>
+          </div>
+          <div id="kpi-risco" style="font-size:32px;font-weight:800;color:#f87171;line-height:1;">—</div>
+          <div style="font-size:11px;color:#64748b;margin-top:4px;">score ≥ 61</div>
+        </div>
+        <div class="kpi-card" style="background:linear-gradient(135deg,#1e293b,#1c1a2e);">
+          <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:12px;">
+            <span style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.05em;">Score Médio</span>
+            <div style="width:32px;height:32px;background:rgba(167,139,250,0.2);border-radius:8px;display:flex;align-items:center;justify-content:center;">
+              <i class="fas fa-shield-alt" style="color:#a78bfa;font-size:12px;"></i>
+            </div>
+          </div>
+          <div id="kpi-score" style="font-size:32px;font-weight:800;color:#a78bfa;line-height:1;">—</div>
+          <div style="font-size:11px;color:#64748b;margin-top:4px;">risco da frota</div>
+        </div>
+      </div>
+
+      <!-- Row 2: Risco + Alertas + Gráfico horas -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:14px;margin-bottom:18px;" id="row2-grid">
+        <!-- Distribuição risco -->
+        <div class="card" style="padding:18px;">
+          <div style="font-size:13px;font-weight:600;color:white;margin-bottom:14px;display:flex;align-items:center;gap:6px;">
+            <i class="fas fa-chart-pie" style="color:#3b82f6;"></i> Distribuição de Risco
+          </div>
+          <canvas id="chart-risco" height="150"></canvas>
+          <div id="dist-risco" style="margin-top:12px;display:flex;flex-direction:column;gap:7px;"></div>
+        </div>
+
+        <!-- Alertas -->
+        <div class="card" style="padding:18px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <span style="font-size:13px;font-weight:600;color:white;display:flex;align-items:center;gap:6px;">
+              <i class="fas fa-bell" style="color:#fbbf24;"></i> Alertas Ativos
+            </span>
+            <button onclick="limparAlertas()" style="font-size:11px;color:var(--muted);background:none;border:none;cursor:pointer;" class="hover:text-white">Limpar</button>
+          </div>
+          <div id="lista-alertas" style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto;"></div>
+        </div>
+
+        <!-- Gráfico por hora -->
+        <div class="card" style="padding:18px;">
+          <div style="font-size:13px;font-weight:600;color:white;margin-bottom:14px;display:flex;align-items:center;gap:6px;">
+            <i class="fas fa-chart-area" style="color:#10b981;"></i> Atividade por Hora
+          </div>
+          <canvas id="chart-horas" height="150"></canvas>
+        </div>
+      </div>
+
+      <!-- Timeline -->
+      <div class="card" style="padding:18px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+          <span style="font-size:13px;font-weight:600;color:white;display:flex;align-items:center;gap:6px;">
+            <i class="fas fa-stream" style="color:#6366f1;"></i> Timeline de Eventos
+          </span>
+          <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#64748b;">
+            <span class="dot-online"></span> Tempo Real
+          </div>
+        </div>
+        <div id="timeline" style="max-height:280px;overflow-y:auto;padding-right:4px;"></div>
+      </div>
+    </div>
+
+    <!-- =========================================================
+    MAPA AO VIVO
+    ========================================================= -->
+    <div class="section" id="sec-mapa">
+      <div id="mapContainer"></div>
+    </div>
+
+    <!-- =========================================================
+    INDICADORES DO DIA
+    ========================================================= -->
+    <div class="section" id="sec-indicadores">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+        <div>
+          <h2 style="font-size:16px;font-weight:700;color:white;">Indicadores do Dia</h2>
+          <p id="data-hoje" style="font-size:12px;color:var(--muted);margin-top:2px;"></p>
+        </div>
+        <button onclick="navTo('frota',document.querySelector('[data-section=frota]'))" class="btn btn-ghost">
+          <i class="fas fa-car"></i> Ver Frota Completa
+        </button>
+      </div>
+      <div id="indicadores-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;"></div>
+    </div>
+
+    <!-- =========================================================
+    RANKING
+    ========================================================= -->
+    <div class="section" id="sec-ranking">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+        <h2 style="font-size:16px;font-weight:700;color:white;">Rankings da Frota</h2>
+        <div style="display:flex;gap:4px;">
+          <button class="btn btn-blue" id="rank-btn-risco" onclick="loadRanking('risco')">
+            <i class="fas fa-fire"></i> Risco
+          </button>
+          <button class="btn btn-ghost" id="rank-btn-velocidade" onclick="loadRanking('velocidade')">
+            <i class="fas fa-tachometer-alt"></i> Velocidade
+          </button>
+          <button class="btn btn-ghost" id="rank-btn-ociosidade" onclick="loadRanking('ociosidade')">
+            <i class="fas fa-clock"></i> Ociosidade
+          </button>
+        </div>
+      </div>
+      <div class="card" style="overflow:hidden;">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Veículo</th>
+              <th>Placa</th>
+              <th>Risk Score</th>
+              <th>Vel. Pico</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="ranking-body"><tr><td colspan="6" style="text-align:center;padding:32px;color:var(--muted);">Carregando...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- =========================================================
+    FROTA
+    ========================================================= -->
+    <div class="section" id="sec-frota">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+        <h2 style="font-size:16px;font-weight:700;color:white;">Frota Cadastrada</h2>
+        <button onclick="openModal('modal-sync')" class="btn btn-blue">
+          <i class="fas fa-sync-alt"></i> Sincronizar com Multiportal
+        </button>
+      </div>
+      <div id="frota-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px;"></div>
+    </div>
+
+    <!-- =========================================================
+    CONFIGURAÇÕES
+    ========================================================= -->
+    <div class="section" id="sec-config">
+      <h2 style="font-size:16px;font-weight:700;color:white;margin-bottom:18px;">Configurações</h2>
+      <div style="max-width:580px;display:flex;flex-direction:column;gap:16px;">
+
+        <!-- Credenciais Multiportal -->
+        <div class="card" style="padding:22px;">
+          <h3 style="font-size:14px;font-weight:600;color:white;margin-bottom:16px;display:flex;align-items:center;gap:8px;">
+            <i class="fas fa-plug" style="color:#3b82f6;"></i> Integração Multiportal
+          </h3>
+          <div style="display:flex;flex-direction:column;gap:12px;">
+            <div>
+              <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:5px;">Usuário</label>
+              <input type="text" id="cfg-user" class="inp" placeholder="usuario_multiportal">
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:5px;">Senha</label>
+              <input type="password" id="cfg-pass" class="inp" placeholder="••••••••">
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:5px;">AppID</label>
+              <input type="text" id="cfg-appid" class="inp" value="portal">
+            </div>
+            <div id="cfg-result" style="display:none;font-size:12px;padding:10px;border-radius:8px;"></div>
+            <div style="display:flex;gap:8px;">
+              <button onclick="testarConexao()" class="btn btn-ghost"><i class="fas fa-plug"></i> Testar Conexão</button>
+              <button onclick="salvarCredenciais()" class="btn btn-blue"><i class="fas fa-save"></i> Salvar</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sincronização -->
+        <div class="card" style="padding:22px;">
+          <h3 style="font-size:14px;font-weight:600;color:white;margin-bottom:16px;display:flex;align-items:center;gap:8px;">
+            <i class="fas fa-sync" style="color:#10b981;"></i> Sincronizar Dados
+          </h3>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <button onclick="sincronizar('veiculos')" class="btn btn-ghost" style="justify-content:center;">
+              <i class="fas fa-car" style="color:#60a5fa;"></i> Veículos
+            </button>
+            <button onclick="sincronizar('eventos')" class="btn btn-ghost" style="justify-content:center;">
+              <i class="fas fa-list" style="color:#fbbf24;"></i> Eventos
+            </button>
+            <button onclick="sincronizar('motoristas')" class="btn btn-ghost" style="justify-content:center;">
+              <i class="fas fa-users" style="color:#34d399;"></i> Motoristas
+            </button>
+            <button onclick="doAtualizar()" class="btn btn-blue" style="justify-content:center;">
+              <i class="fas fa-play"></i> Coletar Agora
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- =========================================================
+    LOGS
+    ========================================================= -->
+    <div class="section" id="sec-logs">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+        <h2 style="font-size:16px;font-weight:700;color:white;">Logs de Coleta</h2>
+        <button onclick="loadLogs()" class="btn btn-ghost"><i class="fas fa-refresh"></i> Atualizar</button>
+      </div>
+      <div class="card" style="overflow:hidden;">
+        <table class="tbl">
+          <thead><tr>
+            <th>Data/Hora</th><th>Status</th><th>Posições</th><th>Duração</th><th>Mensagem</th>
+          </tr></thead>
+          <tbody id="logs-body"><tr><td colspan="5" style="text-align:center;padding:32px;color:var(--muted);">Carregando...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /main -->
+
+<!-- MODAL: Conectar Multiportal -->
+<div class="modal-overlay" id="modal-connect">
+  <div class="modal-box">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+      <h2 style="font-size:15px;font-weight:700;color:white;display:flex;align-items:center;gap:8px;">
+        <i class="fas fa-plug" style="color:#3b82f6;"></i> Conectar Multiportal
+      </h2>
+      <button onclick="closeModal('modal-connect')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;"><i class="fas fa-times"></i></button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <div>
+        <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:5px;">Usuário</label>
+        <input type="text" id="m-user" class="inp" placeholder="usuario_multiportal">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:5px;">Senha</label>
+        <input type="password" id="m-pass" class="inp" placeholder="••••••••">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:5px;">AppID</label>
+        <input type="text" id="m-appid" class="inp" value="portal">
+      </div>
+      <div id="m-result" style="display:none;font-size:12px;padding:10px;border-radius:8px;"></div>
+      <div style="display:flex;gap:8px;padding-top:4px;">
+        <button onclick="conectarMultiportal()" class="btn btn-blue" style="flex:1;justify-content:center;">
+          <i class="fas fa-check-circle"></i> Testar e Salvar
+        </button>
+        <button onclick="closeModal('modal-connect')" class="btn btn-ghost">Cancelar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Sincronizar -->
+<div class="modal-overlay" id="modal-sync">
+  <div class="modal-box">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+      <h2 style="font-size:15px;font-weight:700;color:white;"><i class="fas fa-sync" style="color:#10b981;margin-right:8px;"></i>Sincronizar</h2>
+      <button onclick="closeModal('modal-sync')" style="background:none;border:none;color:var(--muted);cursor:pointer;"><i class="fas fa-times"></i></button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      <button onclick="sincronizar('veiculos')" class="btn btn-ghost" style="justify-content:flex-start;padding:12px 14px;">
+        <i class="fas fa-car" style="color:#60a5fa;width:18px;"></i> Sincronizar Veículos
+      </button>
+      <button onclick="sincronizar('eventos')" class="btn btn-ghost" style="justify-content:flex-start;padding:12px 14px;">
+        <i class="fas fa-list" style="color:#fbbf24;width:18px;"></i> Sincronizar Eventos
+      </button>
+      <button onclick="sincronizar('motoristas')" class="btn btn-ghost" style="justify-content:flex-start;padding:12px 14px;">
+        <i class="fas fa-users" style="color:#34d399;width:18px;"></i> Sincronizar Motoristas
+      </button>
+    </div>
+    <div id="sync-result" style="display:none;font-size:12px;padding:10px;border-radius:8px;margin-top:10px;"></div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div id="toast"></div>
+
+<script>
+// ================================================================
+// AUTH & INIT
+// ================================================================
+var TOKEN = localStorage.getItem('fleet_token');
+var USER  = JSON.parse(localStorage.getItem('fleet_user') || '{}');
+
+if (!TOKEN) { window.location.href = '/login'; }
+
+var mapInstance = null;
+var mapMarkers  = {};
+var chartRisco  = null;
+var chartHoras  = null;
+var autoTimer   = null;
+var currentSection = 'torre';
+
+function authHdr() { return { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json' }; }
+
+async function api(path, opts) {
+  opts = opts || {};
+  opts.headers = authHdr();
+  var res = await fetch(path, opts);
+  if (res.status === 401) { doLogout(); return null; }
+  return res.json();
+}
+
+// ================================================================
+// INICIALIZAÇÃO
+// ================================================================
+document.addEventListener('DOMContentLoaded', async function() {
+  // Mostrar usuário
+  document.getElementById('sb-user').textContent  = USER.nome || 'Usuário';
+  document.getElementById('sb-perfil').textContent = USER.perfil || 'operador';
+  document.getElementById('data-hoje').textContent  = new Date().toLocaleDateString('pt-BR',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+
+  // Buscar tenant
+  try {
+    var t = await api('/api/tenant');
+    if (t && t.tenant) document.getElementById('sb-empresa').textContent = t.tenant.nome_empresa;
+  } catch(e){}
+
+  // Setup + dados iniciais
+  try { await fetch('/api/setup', {method:'POST'}); } catch(e){}
+
+  await loadTorre();
+  startAutoRefresh();
+
+  // Responsive sidebar
+  if (window.innerWidth <= 768) {
+    document.getElementById('btn-menu').style.display = 'block';
+  }
+  window.addEventListener('resize', function() {
+    document.getElementById('btn-menu').style.display = window.innerWidth <= 768 ? 'block' : 'none';
+  });
+});
+
+// ================================================================
+// NAVEGAÇÃO
+// ================================================================
+function navTo(section, el) {
+  // Remover active de todos
+  document.querySelectorAll('.nav-link').forEach(function(n){ n.classList.remove('active'); });
+  document.querySelectorAll('.section').forEach(function(s){ s.classList.remove('active'); });
+
+  // Ativar seção e link
+  if (el) el.classList.add('active');
+  else {
+    var found = document.querySelector('[data-section="' + section + '"]');
+    if (found) found.classList.add('active');
+  }
+  var sec = document.getElementById('sec-' + section);
+  if (sec) sec.classList.add('active');
+
+  currentSection = section;
+
+  // Títulos
+  var titles = {torre:'Torre de Controle',mapa:'Mapa ao Vivo',indicadores:'Indicadores do Dia',ranking:'Rankings',frota:'Frota',config:'Configurações',logs:'Logs de Coleta'};
+  document.getElementById('page-title').textContent = titles[section] || section;
+
+  // Fechar sidebar mobile
+  if (window.innerWidth <= 768) document.getElementById('sidebar').classList.remove('open');
+
+  // Lazy load
+  if (section === 'mapa')        initMap();
+  if (section === 'indicadores') loadIndicadores();
+  if (section === 'ranking')     loadRanking('risco');
+  if (section === 'frota')       loadFrota();
+  if (section === 'logs')        loadLogs();
+}
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+}
+
+// ================================================================
+// TORRE DE CONTROLE
+// ================================================================
+async function loadTorre() {
+  await Promise.all([loadOverview(), loadTimeline(), loadAlertas(), loadStatsHora()]);
+}
+
+async function loadOverview() {
+  var data = await api('/api/dashboard/overview');
+  if (!data) return;
+  var k = data.kpis;
+
+  document.getElementById('kpi-total').textContent  = k.total_veiculos;
+  document.getElementById('kpi-online').textContent = k.veiculos_online;
+  document.getElementById('kpi-risco').textContent  = k.veiculos_risco;
+  document.getElementById('kpi-score').textContent  = k.score_medio_frota;
+
+  var pct = k.total_veiculos > 0 ? Math.round(k.veiculos_online / k.total_veiculos * 100) : 0;
+  document.getElementById('kpi-online-pct').textContent = pct + '% da frota online';
+
+  // Badge alertas
+  var nb = document.getElementById('nb-alertas');
+  if (k.alertas_nao_lidos > 0) { nb.textContent = k.alertas_nao_lidos; nb.style.display = 'inline'; }
+  else nb.style.display = 'none';
+
+  // Gráfico risco
+  renderRiscoChart(k.distribuicao_risco);
+
+  // Dist textual
+  var total = k.total_veiculos || 1;
+  var d = k.distribuicao_risco;
+  document.getElementById('dist-risco').innerHTML =
+    distRow('#10b981','Verde (Baixo)',d.verde,total) +
+    distRow('#f59e0b','Amarelo (Médio)',d.amarelo,total) +
+    distRow('#ef4444','Vermelho (Alto)',d.vermelho,total);
+
+  // Sync time
+  document.getElementById('last-sync').style.display = 'inline';
+  document.getElementById('last-sync').textContent = 'Atualizado às ' + new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+}
+
+function distRow(cor, label, val, total) {
+  var pct = Math.round(val / total * 100) || 0;
+  return '<div style="display:flex;align-items:center;gap:8px;">' +
+    '<div style="width:8px;height:8px;border-radius:50%;background:' + cor + ';flex-shrink:0;"></div>' +
+    '<div style="flex:1;height:4px;background:rgba(15,23,42,0.6);border-radius:2px;"><div style="height:4px;border-radius:2px;background:' + cor + ';width:' + pct + '%;"></div></div>' +
+    '<span style="font-size:11px;color:#64748b;width:80px;">' + val + ' (' + pct + '%)</span>' +
+    '</div>';
+}
+
+function renderRiscoChart(d) {
+  var ctx = document.getElementById('chart-risco').getContext('2d');
+  if (chartRisco) chartRisco.destroy();
+  chartRisco = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: ['Baixo Risco','Risco Médio','Alto Risco'],
+      datasets: [{ data: [d.verde, d.amarelo, d.vermelho], backgroundColor: ['#10b981','#f59e0b','#ef4444'], borderWidth: 0, hoverOffset: 4 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: '68%',
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(i){ return ' ' + i.label + ': ' + i.raw; } } } }
+    }
+  });
+}
+
+async function loadAlertas() {
+  var data = await api('/api/dashboard/alertas');
+  if (!data) return;
+  var alertas = (data.alertas || []).filter(function(a){ return !a.lido; });
+  var el = document.getElementById('lista-alertas');
+  if (!alertas.length) {
+    el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);font-size:12px;"><i class="fas fa-check-circle" style="color:#10b981;margin-right:6px;"></i>Nenhum alerta ativo</div>';
+    return;
+  }
+  el.innerHTML = alertas.slice(0,8).map(function(a) {
+    return '<div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:8px;padding:9px 11px;cursor:pointer;display:flex;align-items:start;gap:8px;" onclick="marcarLido(' + a.id + ')">' +
+      '<i class="fas fa-exclamation-circle" style="color:#f87171;font-size:12px;margin-top:1px;flex-shrink:0;"></i>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:12px;font-weight:600;color:#fca5a5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (a.placa || 'Veículo ' + a.veiculo_id) + '</div>' +
+        '<div style="font-size:11px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px;">' + a.mensagem + '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+async function marcarLido(id) {
+  await api('/api/dashboard/alertas/' + id + '/lido', {method:'POST'});
+  loadAlertas();
+}
+
+async function limparAlertas() {
+  var data = await api('/api/dashboard/alertas');
+  if (!data) return;
+  for (var a of (data.alertas || [])) {
+    await api('/api/dashboard/alertas/' + a.id + '/lido', {method:'POST'});
+  }
+  loadAlertas();
+  document.getElementById('nb-alertas').style.display = 'none';
+}
+
+async function loadTimeline() {
+  var data = await api('/api/dashboard/timeline?limit=40');
+  if (!data) return;
+  var eventos = data.eventos || [];
+  var el = document.getElementById('timeline');
+  if (!eventos.length) {
+    el.innerHTML = '<div style="text-align:center;padding:24px;color:var(--muted);font-size:12px;">Nenhum evento registrado hoje</div>';
+    return;
+  }
+  el.innerHTML = eventos.map(function(ev, i) {
+    var score = ev.risk_score || 0;
+    var cor = score >= 61 ? '#ef4444' : score >= 31 ? '#f59e0b' : '#10b981';
+    var hora = ev.data_gps ? new Date(ev.data_gps).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : '--:--';
+    var last = i === eventos.length - 1;
+    return '<div class="tl-item">' +
+      (!last ? '<div class="tl-line"></div>' : '') +
+      '<div class="tl-dot" style="background:' + cor + '25;border-color:' + cor + ';"></div>' +
+      '<div style="flex:1;display:flex;gap:6px;align-items:baseline;min-width:0;">' +
+        '<span style="font-size:11px;color:#475569;width:38px;flex-shrink:0;">' + hora + '</span>' +
+        '<span style="font-size:12px;font-weight:600;color:#cbd5e1;flex-shrink:0;">' + (ev.placa || ev.descricao || '-') + '</span>' +
+        '<span style="font-size:12px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (ev.evento_nome || 'Posição') + (ev.velocidade > 0 ? ' · ' + ev.velocidade + 'km/h' : '') + '</span>' +
+      '</div>' +
+      '<span style="font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px;flex-shrink:0;color:' + cor + ';background:' + cor + '18;">' + score + '</span>' +
+    '</div>';
+  }).join('');
+}
+
+async function loadStatsHora() {
+  var data = await api('/api/dashboard/stats-hora');
+  if (!data) return;
+  var stats = data.stats || [];
+  var labels = stats.map(function(s){ return s.hora + 'h'; });
+  var dataPos = stats.map(function(s){ return s.total || 0; });
+  var dataAlert = stats.map(function(s){ return s.alertas || 0; });
+  var ctx = document.getElementById('chart-horas').getContext('2d');
+  if (chartHoras) chartHoras.destroy();
+  chartHoras = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [
+        { label:'Posições', data: dataPos, backgroundColor:'rgba(59,130,246,0.25)', borderColor:'#3b82f6', borderWidth:1, borderRadius:2 },
+        { label:'Alertas',  data: dataAlert, backgroundColor:'rgba(239,68,68,0.2)', borderColor:'#ef4444', borderWidth:1, borderRadius:2 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color:'#64748b', font:{size:10}, boxWidth:10 } } },
+      scales: {
+        x: { grid:{color:'rgba(255,255,255,0.04)'}, ticks:{color:'#475569',font:{size:9}} },
+        y: { grid:{color:'rgba(255,255,255,0.04)'}, ticks:{color:'#475569',font:{size:9}} }
+      }
+    }
+  });
+}
+
+// ================================================================
+// MAPA
+// ================================================================
+function initMap() {
+  if (mapInstance) { refreshMap(); return; }
+  mapInstance = L.map('mapContainer', { center:[-15.8, -47.9], zoom:5, zoomControl:true });
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { attribution:'&copy; CARTO', maxZoom:19 }).addTo(mapInstance);
+  refreshMap();
+}
+
+async function refreshMap() {
+  if (!mapInstance) return;
+  var data = await api('/api/veiculos/mapa/posicoes');
+  if (!data) return;
+  var veiculos = data.veiculos || [];
+
+  Object.values(mapMarkers).forEach(function(m){ m.remove(); });
+  mapMarkers = {};
+  var bounds = [];
+
+  veiculos.forEach(function(v) {
+    if (!v.latitude || !v.longitude) return;
+    var cor = v.risk_nivel === 'vermelho' ? '#ef4444' : v.risk_nivel === 'amarelo' ? '#f59e0b' : '#10b981';
+    var icon = L.divIcon({
+      html: '<div class="map-marker" style="background:' + cor + '28;border-color:' + cor + ';"><i class="fas fa-car" style="color:' + cor + ';font-size:11px;"></i></div>',
+      className: '', iconSize:[32,32], iconAnchor:[16,16]
+    });
+    var popup = '<div class="map-popup"><div style="font-weight:700;font-size:13px;margin-bottom:8px;">' + (v.placa || v.descricao || 'Veículo') + '</div>' +
+      '<div style="display:flex;flex-direction:column;gap:3px;">' +
+      (v.modelo ? '<span>' + (v.marca||'') + ' ' + v.modelo + '</span>' : '') +
+      '<span><i class="fas fa-tachometer-alt" style="width:14px;"></i> ' + (v.velocidade||0) + ' km/h</span>' +
+      (v.motorista_nome ? '<span><i class="fas fa-user" style="width:14px;"></i> ' + v.motorista_nome + '</span>' : '') +
+      '<span style="margin-top:5px;"><span style="background:' + cor + '25;color:' + cor + ';padding:2px 8px;border-radius:999px;font-weight:700;">Score: ' + (v.risk_score||0) + '</span></span>' +
+      (v.endereco ? '<span style="font-size:10px;color:#64748b;margin-top:3px;">' + v.endereco.substring(0,50) + '</span>' : '') +
+      '</div></div>';
+    var marker = L.marker([v.latitude, v.longitude], {icon:icon});
+    marker.bindPopup(popup, {className:'dark-popup', maxWidth:260});
+    marker.addTo(mapInstance);
+    mapMarkers[v.id] = marker;
+    bounds.push([v.latitude, v.longitude]);
+  });
+
+  if (bounds.length > 0) mapInstance.fitBounds(bounds, {padding:[50,50], maxZoom:13});
+}
+
+// ================================================================
+// INDICADORES
+// ================================================================
+async function loadIndicadores() {
+  var data = await api('/api/veiculos');
+  if (!data) return;
+  var veiculos = data.veiculos || [];
+  var el = document.getElementById('indicadores-grid');
+
+  if (!veiculos.length) {
+    el.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:48px;color:var(--muted);">' +
+      '<i class="fas fa-car" style="font-size:32px;margin-bottom:12px;display:block;"></i>' +
+      '<p style="font-size:14px;font-weight:600;color:#cbd5e1;margin-bottom:8px;">Nenhum veículo cadastrado</p>' +
+      '<p style="font-size:12px;margin-bottom:16px;">Sincronize com a Multiportal para importar sua frota</p>' +
+      '<button onclick="openModal(\'modal-sync\')" class="btn btn-blue"><i class="fas fa-sync-alt"></i> Sincronizar Frota</button>' +
+    '</div>';
+    return;
+  }
+
+  el.innerHTML = veiculos.map(function(v) {
+    var cor = v.risk_nivel === 'vermelho' ? '#ef4444' : v.risk_nivel === 'amarelo' ? '#f59e0b' : '#10b981';
+    var score = v.risk_score || 0;
+    var pico = Math.round(v.pico_velocidade_hoje || 0);
+    var pos  = v.posicoes_hoje || 0;
+    var km   = Math.round(pos * 0.033);
+    return '<div class="card card-hover" style="padding:18px;">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">' +
+        '<div style="display:flex;align-items:center;gap:10px;">' +
+          '<div style="width:38px;height:38px;border-radius:10px;background:' + cor + '18;border:1px solid ' + cor + '30;display:flex;align-items:center;justify-content:center;">' +
+            '<i class="fas fa-car" style="color:' + cor + ';font-size:14px;"></i>' +
+          '</div>' +
+          '<div>' +
+            '<div style="font-size:14px;font-weight:700;color:white;">' + (v.placa || v.id_multiportal) + '</div>' +
+            '<div style="font-size:11px;color:var(--muted);">' + (v.marca||'') + ' ' + (v.modelo||'') + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<span class="badge ' + (v.status_online ? 'badge-green' : 'badge-gray') + '">' + (v.status_online ? '<span class="dot-online" style="width:6px;height:6px;"></span> Online' : '⚫ Offline') + '</span>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;">' +
+        metricBox('Pico Vel.', pico + '<span style="font-size:10px;font-weight:400;color:var(--muted);"> km/h</span>') +
+        metricBox('Posições', pos) +
+        metricBox('Km Est.', km) +
+        metricBox('Score', '<span style="color:' + cor + '">' + score + '</span>') +
+      '</div>' +
+      '<div style="background:rgba(15,23,42,0.6);border-radius:4px;height:6px;overflow:hidden;">' +
+        '<div style="height:6px;border-radius:4px;background:linear-gradient(90deg,#10b981,' + cor + ');width:' + score + '%;transition:width 0.5s;"></div>' +
+      '</div>' +
+      '<div style="display:flex;justify-content:space-between;font-size:11px;margin-top:4px;">' +
+        '<span style="color:var(--muted);">' + (v.descricao || v.frota || '') + '</span>' +
+        '<span style="color:' + cor + ';font-weight:600;">' + (score<=30?'Baixo Risco':score<=60?'Risco Médio':'Alto Risco') + '</span>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function metricBox(label, val) {
+  return '<div style="background:rgba(15,23,42,0.5);border-radius:8px;padding:8px;text-align:center;">' +
+    '<div style="font-size:10px;color:var(--muted);margin-bottom:3px;">' + label + '</div>' +
+    '<div style="font-size:15px;font-weight:700;color:white;">' + val + '</div>' +
+  '</div>';
+}
+
+// ================================================================
+// RANKING
+// ================================================================
+async function loadRanking(tipo) {
+  // Atualizar botões
+  ['risco','velocidade','ociosidade'].forEach(function(t) {
+    var btn = document.getElementById('rank-btn-' + t);
+    if (btn) { btn.className = t === tipo ? 'btn btn-blue' : 'btn btn-ghost'; }
+  });
+
+  var body = document.getElementById('ranking-body');
+  body.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:32px;"><div class="spinner" style="margin:0 auto;"></div></td></tr>';
+
+  var data = await api('/api/dashboard/ranking?tipo=' + tipo);
+  if (!data) return;
+  var items = data.ranking || [];
+
+  if (!items.length) {
+    body.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--muted);">Nenhum dado disponível. Sincronize a frota e colete dados.</td></tr>';
+    return;
+  }
+
+  var medals = ['🥇','🥈','🥉'];
+  body.innerHTML = items.map(function(v, i) {
+    var cor = v.risk_nivel === 'vermelho' ? '#ef4444' : v.risk_nivel === 'amarelo' ? '#f59e0b' : '#10b981';
+    var score = v.risk_score || 0;
+    return '<tr>' +
+      '<td style="font-size:14px;font-weight:700;color:#94a3b8;width:40px;">' + (medals[i] || (i+1)+'.') + '</td>' +
+      '<td>' +
+        '<div style="font-size:13px;font-weight:600;color:white;">' + (v.descricao || v.id_multiportal || '-') + '</div>' +
+        (v.frota ? '<div style="font-size:11px;color:var(--muted);">Frota: ' + v.frota + '</div>' : '') +
+      '</td>' +
+      '<td><span style="font-family:monospace;font-size:13px;color:#cbd5e1;font-weight:600;">' + (v.placa||'-') + '</span></td>' +
+      '<td>' +
+        '<div style="display:flex;align-items:center;gap:8px;">' +
+          '<div class="risk-bar-wrap"><div class="risk-bar-fill" style="width:' + score + '%;background:' + cor + ';"></div></div>' +
+          '<span style="font-size:13px;font-weight:700;color:' + cor + ';">' + score + '</span>' +
+        '</div>' +
+      '</td>' +
+      '<td style="font-size:13px;color:#cbd5e1;">' + Math.round(v.pico_velocidade || 0) + ' km/h</td>' +
+      '<td><span class="badge ' + (v.status_online ? 'badge-green' : 'badge-gray') + '">' + (v.status_online ? 'Online' : 'Offline') + '</span></td>' +
+    '</tr>';
+  }).join('');
+}
+
+// ================================================================
+// FROTA
+// ================================================================
+async function loadFrota() {
+  var data = await api('/api/veiculos');
+  if (!data) return;
+  var veiculos = data.veiculos || [];
+  var el = document.getElementById('frota-grid');
+
+  if (!veiculos.length) {
+    el.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:48px;color:var(--muted);">' +
+      '<i class="fas fa-car" style="font-size:32px;margin-bottom:12px;display:block;"></i>' +
+      '<p style="font-size:14px;font-weight:600;color:#cbd5e1;margin-bottom:8px;">Frota vazia</p>' +
+      '<button onclick="openModal(\'modal-sync\')" class="btn btn-blue"><i class="fas fa-sync-alt"></i> Sincronizar Frota</button>' +
+    '</div>';
+    return;
+  }
+
+  el.innerHTML = veiculos.map(function(v) {
+    var cor = v.risk_nivel === 'vermelho' ? '#ef4444' : v.risk_nivel === 'amarelo' ? '#f59e0b' : '#10b981';
+    var score = v.risk_score || 0;
+    return '<div class="card card-hover" style="padding:18px;">' +
+      '<div style="display:flex;align-items:start;justify-content:space-between;margin-bottom:12px;">' +
+        '<div style="display:flex;align-items:center;gap:10px;">' +
+          '<div style="width:40px;height:40px;border-radius:11px;background:' + cor + '18;border:1px solid ' + cor + '30;display:flex;align-items:center;justify-content:center;">' +
+            '<i class="fas fa-' + (v.status_online ? 'car' : 'parking') + '" style="color:' + cor + ';font-size:15px;"></i>' +
+          '</div>' +
+          '<div>' +
+            '<div style="font-size:15px;font-weight:700;color:white;">' + (v.placa||'-') + '</div>' +
+            '<div style="font-size:11px;color:var(--muted);">' + (v.marca||'') + ' ' + (v.modelo||'') + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<span class="badge ' + (v.status_online ? 'badge-green' : 'badge-gray') + '">' + (v.status_online ? 'Online' : 'Offline') + '</span>' +
+      '</div>' +
+      '<div style="font-size:12px;color:#64748b;margin-bottom:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (v.descricao||'Sem descrição') + '</div>' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;font-size:12px;margin-bottom:6px;">' +
+        '<span style="color:var(--muted);">Risk Score</span>' +
+        '<span style="font-weight:700;color:' + cor + ';">' + score + '/100</span>' +
+      '</div>' +
+      '<div style="background:rgba(15,23,42,0.6);border-radius:3px;height:5px;">' +
+        '<div style="height:5px;border-radius:3px;background:' + cor + ';width:' + score + '%;"></div>' +
+      '</div>' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">' +
+        '<span style="font-size:11px;color:#475569;">ID: ' + v.id_multiportal + '</span>' +
+        (v.frota ? '<span class="badge badge-blue">' + v.frota + '</span>' : '') +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+// ================================================================
+// LOGS
+// ================================================================
+async function loadLogs() {
+  var data = await api('/api/sync/logs');
+  if (!data) return;
+  var logs = data.logs || [];
+  var body = document.getElementById('logs-body');
+  if (!logs.length) {
+    body.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--muted);">Nenhum log encontrado</td></tr>';
+    return;
+  }
+  body.innerHTML = logs.map(function(l) {
+    var cor = l.status === 'ok' ? '#10b981' : l.status === 'sem_dados' ? '#f59e0b' : '#ef4444';
+    var icon = l.status === 'ok' ? '✓' : l.status === 'sem_dados' ? '∅' : '✗';
+    var label = l.status === 'ok' ? 'OK' : l.status === 'sem_dados' ? 'Sem dados' : 'Erro';
+    var data_fmt = l.created_at ? new Date(l.created_at).toLocaleString('pt-BR') : '-';
+    return '<tr>' +
+      '<td style="font-size:12px;color:#94a3b8;">' + data_fmt + '</td>' +
+      '<td><span style="color:' + cor + ';background:' + cor + '18;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;">' + icon + ' ' + label + '</span></td>' +
+      '<td style="font-size:13px;font-weight:700;color:white;">' + (l.posicoes_recebidas||0) + '</td>' +
+      '<td style="font-size:12px;color:#64748b;">' + (l.duracao_ms ? l.duracao_ms + 'ms' : '-') + '</td>' +
+      '<td style="font-size:12px;color:#64748b;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (l.mensagem||'-') + '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+// ================================================================
+// CONFIGURAÇÕES
+// ================================================================
+async function testarConexao() {
+  var u = document.getElementById('cfg-user').value;
+  var p = document.getElementById('cfg-pass').value;
+  var a = document.getElementById('cfg-appid').value;
+  showCfgResult('Testando...', 'info');
+  var data = await api('/api/sync/test-connection', { method:'POST', body: JSON.stringify({username:u,password:p,appid:a}) });
+  if (data && data.ok) showCfgResult('✓ ' + data.message, 'success');
+  else showCfgResult('✗ ' + (data && data.message ? data.message : 'Falha na conexão'), 'error');
+}
+
+async function salvarCredenciais() {
+  var u = document.getElementById('cfg-user').value;
+  var p = document.getElementById('cfg-pass').value;
+  var a = document.getElementById('cfg-appid').value;
+  var data = await api('/api/sync/credentials', {method:'POST', body:JSON.stringify({username:u,password:p,appid:a})});
+  if (data && data.ok) { showCfgResult('✓ Credenciais salvas!', 'success'); showToast('Credenciais salvas!', 'success'); }
+  else showCfgResult('✗ Erro ao salvar', 'error');
+}
+
+function showCfgResult(msg, type) {
+  var el = document.getElementById('cfg-result');
+  el.style.display = 'block';
+  var colors = { success:'background:rgba(16,185,129,0.12);color:#34d399;border:1px solid rgba(16,185,129,0.25);', error:'background:rgba(239,68,68,0.12);color:#f87171;border:1px solid rgba(239,68,68,0.25);', info:'background:rgba(59,130,246,0.12);color:#60a5fa;border:1px solid rgba(59,130,246,0.25);' };
+  el.style.cssText += colors[type] || colors.info;
+  el.textContent = msg;
+}
+
+async function sincronizar(tipo) {
+  var res = document.getElementById('sync-result');
+  if (res) { res.style.display='block'; res.style.cssText='background:rgba(59,130,246,0.1);color:#60a5fa;border:1px solid rgba(59,130,246,0.2);font-size:12px;padding:10px;border-radius:8px;'; res.textContent='Sincronizando...'; }
+  var data = await api('/api/sync/' + tipo, {method:'POST'});
+  if (data && data.ok !== false) {
+    showToast('✓ ' + (data.message || 'Sincronizado'), 'success');
+    if (res) { res.style.background='rgba(16,185,129,0.1)'; res.style.color='#34d399'; res.style.borderColor='rgba(16,185,129,0.2)'; res.textContent='✓ ' + (data.message || 'OK'); }
+    loadFrota(); loadOverview();
+  } else {
+    showToast('✗ Erro ao sincronizar', 'error');
+    if (res) { res.style.background='rgba(239,68,68,0.1)'; res.style.color='#f87171'; res.style.borderColor='rgba(239,68,68,0.2)'; res.textContent='✗ ' + (data && data.error ? data.error : 'Falha'); }
+  }
+}
+
+// ================================================================
+// ATUALIZAR (coleta)
+// ================================================================
+async function doAtualizar() {
+  var icon = document.getElementById('sync-icon');
+  var dot  = document.getElementById('dot-coleta');
+  var txt  = document.getElementById('txt-coleta');
+  var btn  = document.getElementById('btn-atualizar');
+
+  icon.className = 'fas fa-sync-alt fa-spin';
+  btn.disabled = true;
+  dot.style.background = '#f59e0b';
+  txt.textContent = 'Coletando...';
+
+  try {
+    var data = await api('/api/sync/coletar', {method:'POST'});
+    dot.style.background = (data && data.ok) ? '#10b981' : '#ef4444';
+    txt.textContent = (data && data.ok) ? (data.posicoes || 0) + ' pos.' : 'Erro';
+    showToast((data && data.ok) ? '✓ Coletado: ' + (data.posicoes||0) + ' posições' : '✗ Erro na coleta', (data && data.ok) ? 'success' : 'error');
+
+    if (currentSection === 'torre') await loadTorre();
+    else if (currentSection === 'mapa') refreshMap();
+    else if (currentSection === 'indicadores') loadIndicadores();
+  } catch(e) {
+    dot.style.background = '#ef4444';
+    txt.textContent = 'Erro';
+  } finally {
+    icon.className = 'fas fa-sync-alt';
+    btn.disabled = false;
+  }
+}
+
+async function conectarMultiportal() {
+  var u = document.getElementById('m-user').value;
+  var p = document.getElementById('m-pass').value;
+  var a = document.getElementById('m-appid').value;
+  var res = document.getElementById('m-result');
+  res.style.display = 'block';
+  res.style.cssText = 'background:rgba(59,130,246,0.1);color:#60a5fa;border:1px solid rgba(59,130,246,0.2);font-size:12px;padding:10px;border-radius:8px;';
+  res.textContent = 'Testando conexão...';
+
+  var test = await api('/api/sync/test-connection', {method:'POST', body:JSON.stringify({username:u,password:p,appid:a})});
+  if (test && test.ok) {
+    await api('/api/sync/credentials', {method:'POST', body:JSON.stringify({username:u,password:p,appid:a})});
+    res.style.background = 'rgba(16,185,129,0.1)'; res.style.color = '#34d399'; res.style.borderColor = 'rgba(16,185,129,0.2)';
+    res.textContent = '✓ ' + test.message;
+    setTimeout(async function() {
+      closeModal('modal-connect');
+      showToast('Multiportal conectado! Sincronizando...', 'success');
+      await sincronizar('veiculos');
+    }, 1200);
+  } else {
+    res.style.background = 'rgba(239,68,68,0.1)'; res.style.color = '#f87171'; res.style.borderColor = 'rgba(239,68,68,0.2)';
+    res.textContent = '✗ ' + (test && test.message ? test.message : 'Credenciais inválidas ou IP não liberado.');
+  }
+}
+
+// ================================================================
+// MODAL
+// ================================================================
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+document.querySelectorAll('.modal-overlay').forEach(function(m) {
+  m.addEventListener('click', function(e) { if (e.target === m) m.classList.remove('open'); });
+});
+
+// ================================================================
+// AUTO REFRESH
+// ================================================================
+function startAutoRefresh() {
+  if (autoTimer) clearInterval(autoTimer);
+  autoTimer = setInterval(function() {
+    if      (currentSection === 'torre')       loadTorre();
+    else if (currentSection === 'mapa')        refreshMap();
+    else if (currentSection === 'indicadores') loadIndicadores();
+  }, 30000);
+}
+
+// ================================================================
+// TOAST
+// ================================================================
+function showToast(msg, type) {
+  var t = document.getElementById('toast');
+  var styles = {
+    success: 'background:rgba(16,185,129,0.15);color:#34d399;border-color:rgba(16,185,129,0.3);',
+    error:   'background:rgba(239,68,68,0.15);color:#f87171;border-color:rgba(239,68,68,0.3);',
+    info:    'background:rgba(59,130,246,0.15);color:#60a5fa;border-color:rgba(59,130,246,0.3);'
+  };
+  t.style.cssText = (styles[type]||styles.info) + 'position:fixed;bottom:20px;right:20px;z-index:999;padding:12px 18px;border-radius:12px;font-size:13px;font-weight:600;backdrop-filter:blur(10px);box-shadow:0 8px 32px rgba(0,0,0,0.4);border:1px solid;display:block;max-width:320px;';
+  t.textContent = msg;
+  clearTimeout(t._timer);
+  t._timer = setTimeout(function() { t.style.display = 'none'; }, 4000);
+}
+
+// ================================================================
+// LOGOUT
+// ================================================================
+function doLogout() {
+  localStorage.removeItem('fleet_token');
+  localStorage.removeItem('fleet_user');
+  window.location.href = '/login';
+}
+
+// Responsive tweaks
+window.addEventListener('resize', function() {
+  if (window.innerWidth > 768) document.getElementById('sidebar').classList.remove('open');
+});
+</script>
+</body>
+</html>

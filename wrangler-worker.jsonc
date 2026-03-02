@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "fleet-bridge",
+  "main": "dist/_worker.js",
+  "compatibility_date": "2026-02-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "fleet-bridge-production",
+      "database_id": "local-fleet-bridge"
+    }
+  ]
+}

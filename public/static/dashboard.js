@@ -40,7 +40,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (empresaNome) empresaNome.textContent = res.data.tenant?.nome_empresa || 'Fleet Bridge';
   } catch(e) {}
 
-  // Setup inicial do banco
+  // Setup inicial do banco (silencioso)
   try {
     await axios.post('/api/setup');
   } catch(e) {}
@@ -49,6 +49,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadOverview();
   await loadTimeline();
   await loadAlertas();
+  await loadStatsHora();
 
   // Auto-refresh
   startAutoRefresh();
@@ -844,7 +845,9 @@ function logout() {
   window.location.href = '/login';
 }
 
-// Inicializar stats hora após carregamento
-window.addEventListener('load', function() {
-  setTimeout(loadStatsHora, 800);
+// ============================================================
+// ERROR HANDLER GLOBAL
+// ============================================================
+window.addEventListener('unhandledrejection', function(e) {
+  console.warn('[FleetBridge] Unhandled promise rejection:', e.reason);
 });

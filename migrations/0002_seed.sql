@@ -1,4 +1,5 @@
 -- Seed inicial: Tenant demo + usuário admin
+-- Senha hash: SHA-256 de 'demo123' + salt 'fleetbridge_salt'
 INSERT OR IGNORE INTO tenants (
   id, nome_empresa, email_admin, senha_hash, 
   multiportal_appid, status, plano
@@ -6,7 +7,7 @@ INSERT OR IGNORE INTO tenants (
   1, 
   'Fleet Bridge Demo', 
   'admin@fleetbridge.com.br',
-  '$2b$10$demo_hash_admin_senha_123',
+  'd1db0f55855fb340c82daf9d5aaae3dea89292a4b89c374df9486dbc4978f7f7',
   'portal',
   'ativo',
   'enterprise'
@@ -18,7 +19,7 @@ INSERT OR IGNORE INTO usuarios (
   1,
   'Administrador',
   'admin@fleetbridge.com.br',
-  'demo123',
+  'd1db0f55855fb340c82daf9d5aaae3dea89292a4b89c374df9486dbc4978f7f7',
   'admin'
 );
 

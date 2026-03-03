@@ -5,5 +5,12 @@
   "pages_build_output_dir": "./dist",
   "compatibility_flags": [
     "nodejs_compat"
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "fleet-bridge-production",
+      "database_id": "82f8a76d-8c20-4c0d-b6ff-798266c87920"
+    }
   ]
 }

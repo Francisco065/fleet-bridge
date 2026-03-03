@@ -57,6 +57,8 @@ app.post('/api/setup', async (c) => {
     const senhaHash = await hashPassword('demo123')
     await c.env.DB.prepare(`INSERT OR IGNORE INTO tenants (id,nome_empresa,email_admin,senha_hash,status,plano) VALUES (1,'Fleet Bridge Demo','admin@fleetbridge.com.br',?,'ativo','enterprise')`).bind(senhaHash).run()
     await c.env.DB.prepare(`INSERT OR IGNORE INTO usuarios (tenant_id,nome,email,senha_hash,perfil) VALUES (1,'Administrador','admin@fleetbridge.com.br',?,'admin')`).bind(senhaHash).run()
+    // Garantir que a senha do admin demo está sempre com hash correto
+    await c.env.DB.prepare(`UPDATE usuarios SET senha_hash = ? WHERE email = 'admin@fleetbridge.com.br' AND length(senha_hash) < 20`).bind(senhaHash).run()
     // Eventos padrão
     const eventos = [
       ['1','Ignição Ligada',0,'info'],['2','Ignição Desligada',0,'info'],['3','Excesso de Velocidade',35,'critico'],

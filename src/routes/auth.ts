@@ -32,12 +32,19 @@ auth.post('/login', async (c) => {
       return c.json({ error: 'Conta da empresa suspensa' }, 401)
     }
 
-    // Verificar senha (suporte a hash SHA256 e senha demo direta)
+    // Verificar senha (suporte a hash SHA256 e senha demo direta para retrocompatibilidade)
     const senhaValida = await verifyPassword(senha, usuario.senha_hash) ||
-      senha === usuario.senha_hash // suporte demo
+      (usuario.senha_hash.length < 20 && senha === usuario.senha_hash) // fallback legado
 
     if (!senhaValida) {
       return c.json({ error: 'Credenciais inválidas' }, 401)
+    }
+
+    // Se senha legada (texto puro), atualizar para hash automaticamente
+    if (usuario.senha_hash.length < 20 && senha === usuario.senha_hash) {
+      const { hashPassword } = await import('../utils/helpers')
+      const novoHash = await hashPassword(senha)
+      await c.env.DB.prepare('UPDATE usuarios SET senha_hash = ? WHERE id = ?').bind(novoHash, usuario.id).run()
     }
 
     // Gerar JWT

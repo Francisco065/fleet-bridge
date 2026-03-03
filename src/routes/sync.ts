@@ -148,6 +148,16 @@ sync.post('/motoristas', async (c) => {
 sync.post('/coletar', async (c) => {
   const tenant = c.get('tenant')
 
+  // Verificar se credenciais estão configuradas
+  if (!tenant.multiportal_username || !tenant.multiportal_password) {
+    return c.json({
+      ok: false,
+      status: 'sem_credenciais',
+      mensagem: 'Configure as credenciais da Multiportal nas Configurações antes de coletar dados.',
+      posicoes: 0
+    })
+  }
+
   const result = await coletarDadosTenant(c.env.DB, tenant)
 
   return c.json({

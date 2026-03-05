@@ -69,6 +69,29 @@ app.post('/api/setup', async (c) => {
     for (const [id, nome, peso, cat] of eventos) {
       await c.env.DB.prepare(`INSERT OR IGNORE INTO eventos (tenant_id,id_multiportal,nome,peso_risco,categoria) VALUES (1,?,?,?,?)`).bind(id,nome,peso,cat).run()
     }
+
+    // Inserir posições demo para o dia atual se não existirem
+    const hoje = new Date().toISOString().slice(0, 10)
+    const countPos = await c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM posicoes WHERE tenant_id=1 AND date(data_gps)=?`).bind(hoje).first<any>()
+    if (!countPos || countPos.cnt === 0) {
+      // Buscar veículos existentes
+      const veics = await c.env.DB.prepare(`SELECT id FROM veiculos WHERE tenant_id=1 LIMIT 5`).all<any>()
+      if (veics.results && veics.results.length > 0) {
+        const agora = new Date()
+        const horas = [0,2,4,6,8,10,12,14,16,18,20,22]
+        for (const v of veics.results) {
+          for (const h of horas) {
+            const ts = new Date(agora)
+            ts.setHours(h, 0, 0, 0)
+            const dt = ts.toISOString().replace('T', ' ').slice(0,19)
+            await c.env.DB.prepare(
+              `INSERT OR IGNORE INTO posicoes (tenant_id,veiculo_id,data_gps,latitude,longitude,velocidade,ignicao,online,risk_score,evento_nome) VALUES (1,?,?,?,?,?,1,1,?,?)`
+            ).bind(v.id, dt, -23.55 + Math.random()*0.1, -46.63 + Math.random()*0.1, Math.floor(Math.random()*80), Math.floor(Math.random()*30), 'Ignição Ligada').run()
+          }
+        }
+      }
+    }
+
     return c.json({ ok: true, message: 'Sistema inicializado!' })
   } catch (err) {
     return c.json({ ok: false, error: String(err) }, 500)
@@ -443,29 +466,33 @@ function getDashboardPage(): string {
           </div>
         </div>
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
-          <div class="card p-5">
+          <div class="card p-5 flex flex-col">
             <h3 class="text-sm font-semibold text-white mb-4 flex items-center gap-2">
               <i class="fas fa-chart-pie text-blue-400"></i> Distribuição de Risco
             </h3>
-            <canvas id="chartRisco" height="180"></canvas>
-            <div id="dist-risco" class="mt-4 space-y-2"></div>
+            <div style="height:180px;position:relative;">
+              <canvas id="chartRisco" height="180"></canvas>
+            </div>
+            <div id="dist-risco" class="mt-4 space-y-2.5"></div>
           </div>
-          <div class="card p-5">
+          <div class="card p-5 flex flex-col">
             <div class="flex items-center justify-between mb-4">
               <h3 class="text-sm font-semibold text-white flex items-center gap-2">
                 <i class="fas fa-bell text-yellow-400"></i> Alertas
               </h3>
-              <button onclick="marcarTodosLidos()" class="text-xs text-slate-500 hover:text-slate-300">Limpar todos</button>
+              <button onclick="marcarTodosLidos()" class="text-xs text-slate-500 hover:text-slate-300 transition"><i class="fas fa-check-double mr-1"></i>Limpar todos</button>
             </div>
-            <div id="lista-alertas" class="space-y-2 max-h-52 overflow-y-auto">
-              <div class="text-slate-500 text-xs text-center py-4">Nenhum alerta</div>
+            <div id="lista-alertas" class="space-y-1 min-h-[180px] max-h-64 overflow-y-auto">
+              <div class="text-slate-500 text-xs text-center py-4">Carregando...</div>
             </div>
           </div>
-          <div class="card p-5">
+          <div class="card p-5 flex flex-col">
             <h3 class="text-sm font-semibold text-white mb-4 flex items-center gap-2">
               <i class="fas fa-chart-area text-green-400"></i> Atividade Hoje
             </h3>
-            <canvas id="chartHoras" height="180"></canvas>
+            <div style="height:180px;position:relative;">
+              <canvas id="chartHoras" height="180"></canvas>
+            </div>
           </div>
         </div>
         <div class="card p-5">

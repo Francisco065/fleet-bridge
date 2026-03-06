@@ -2,17 +2,28 @@
 
 ## Plataforma SaaS de Monitoramento Veicular em Tempo Real
 
-### Visão Geral
 Fleet Bridge é uma plataforma SaaS profissional para monitoramento de frotas integrada à API Multiportal, com motor próprio de análise de risco e arquitetura multi-tenant escalável.
 
 ---
 
-## 🌐 URLs
-- **Aplicação**: http://localhost:3000 (sandbox)
-- **Login**: http://localhost:3000/login
-- **Health**: http://localhost:3000/health
+## 🌐 URLs de Produção
+- **Aplicação (Tenants)**: https://fleet-bridge.pages.dev
+- **Login Tenant**: https://fleet-bridge.pages.dev/login
+- **Painel Administrativo**: https://fleet-bridge.pages.dev/admin
+- **Login Admin**: https://fleet-bridge.pages.dev/admin/login
+- **GitHub**: https://github.com/Francisco065/fleet-bridge
 
-## 🔐 Acesso Demo
+---
+
+## 🔐 Credenciais de Acesso
+
+### Painel Administrativo (Superadmin)
+- **URL**: https://fleet-bridge.pages.dev/admin/login
+- **Email**: `superadmin@fleetbridge.com.br`
+- **Senha**: `admin@2024`
+
+### Tenant Demo (Empresa)
+- **URL**: https://fleet-bridge.pages.dev/login
 - **Email**: `admin@fleetbridge.com.br`
 - **Senha**: `demo123`
 
@@ -20,168 +31,148 @@ Fleet Bridge é uma plataforma SaaS profissional para monitoramento de frotas in
 
 ## ✅ Funcionalidades Implementadas
 
-### Backend
-- [x] Autenticação JWT com multi-tenant
-- [x] Integração completa API Multiportal v1.8
-- [x] Gerenciamento automático de token (renovação antes de expirar)
-- [x] Worker de coleta em tempo real (`/api/sync/coletar`)
-- [x] Motor de Risk Score 0-100 (verde/amarelo/vermelho)
-- [x] CRUD completo de veículos, posições, eventos, motoristas
-- [x] Sistema de alertas automáticos
-- [x] Logs de coleta estruturados
-- [x] Banco D1 multi-tenant com migrations
+### Painel Administrativo (/admin)
+- ✅ Login exclusivo para superadmin (JWT separado, perfil `superadmin`)
+- ✅ Dashboard com KPIs: clientes ativos, usuários, veículos, novos cadastros (30d)
+- ✅ Distribuição de clientes por plano (Básico/Profissional/Enterprise)
+- ✅ Lista dos últimos cadastros
+- ✅ **Gestão de Clientes (Tenants)**: CRUD completo com busca, filtros e paginação
+- ✅ **Formulário multi-abas**: Empresa → Responsável → Endereço → Contrato
+- ✅ Busca automática de CEP via ViaCEP
+- ✅ Modal de detalhe do cliente (stats, responsável, usuários vinculados)
+- ✅ **Gestão de Usuários por Tenant**: criação, edição e desativação
+- ✅ Visualização de planos disponíveis com features e preços
+- ✅ Ativação/desativação de clientes
 
-### Frontend
-- [x] Dashboard Torre de Controle (KPIs em tempo real)
-- [x] Mapa ao vivo com Leaflet (ícones coloridos por risco)
-- [x] Indicadores diários por veículo
-- [x] Rankings de risco, velocidade e ociosidade
-- [x] Timeline de eventos em tempo real
-- [x] Sistema de alertas com notificações
-- [x] Tela de configurações (credenciais Multiportal)
-- [x] Logs de coleta
-- [x] Auto-refresh a cada 30 segundos
-- [x] Dark mode premium
+### Dashboard do Tenant (/)
+- ✅ Torre de Controle (KPIs: total, online, em risco, score médio)
+- ✅ Gráfico de Distribuição de Risco (Chart.js, doughnut)
+- ✅ Gráfico de Atividade Hoje (Chart.js, barras horárias)
+- ✅ Alertas em tempo real
+- ✅ Timeline de eventos
+- ✅ Mapa ao vivo (Leaflet.js, dark theme)
+- ✅ Indicadores do Dia por veículo
+- ✅ Rankings (risco, velocidade, ociosidade)
+- ✅ Lista de Veículos
+- ✅ Configurações de integração Multiportal
+- ✅ Logs de coleta
+
+### Backend / API
+- ✅ Autenticação JWT multi-perfil (admin, operador, superadmin)
+- ✅ Motor de risco próprio (score 0-100 com pesos por evento)
+- ✅ Integração Multiportal (coleta de posições, veículos, motoristas, eventos)
+- ✅ Multi-tenancy completo (segregação total de dados por tenant)
+- ✅ D1 Database (Cloudflare SQLite edge)
+- ✅ Migrations versionadas (0001, 0002, 0003)
 
 ---
 
-## 🔌 API Endpoints
+## 🏗️ Arquitetura
 
-### Públicos
+### Tecnologias
+- **Runtime**: Cloudflare Workers (edge)
+- **Framework**: Hono v4
+- **Banco de Dados**: Cloudflare D1 (SQLite distribuído)
+- **Frontend**: HTML + Tailwind CSS (CDN) + Chart.js + Leaflet.js + Axios
+- **Build**: Vite + TypeScript
+
+### Estrutura Multi-Tenant
+```
+Superadmin (admins table)
+  └── Tenant A (tenants table)  ← empresa/cliente
+        ├── Usuario(s) (usuarios table)
+        ├── Veículos (veiculos table)
+        ├── Motoristas (motoristas table)
+        └── Dados: posicoes, alertas, eventos, logs
+  └── Tenant B
+        └── ...
+```
+
+### Planos Disponíveis
+| Plano | Veículos | Usuários | Preço/mês |
+|-------|----------|----------|-----------|
+| Básico | 10 | 3 | R$ 199,90 |
+| Profissional | 50 | 10 | R$ 499,90 |
+| Enterprise | Ilimitado | 100 | R$ 1.299,90 |
+
+---
+
+## 🔑 APIs Principais
+
+### Autenticação
 | Método | Endpoint | Descrição |
 |--------|----------|-----------|
-| GET | `/health` | Status do serviço |
-| POST | `/api/auth/login` | Login (email, senha) |
-| POST | `/api/auth/register` | Criar conta |
-| POST | `/api/setup` | Inicializar banco (idempotente) |
+| POST | `/api/auth/login` | Login de tenant |
+| POST | `/api/admin/auth/login` | Login de superadmin |
+| GET | `/api/auth/me` | Dados do usuário logado |
 
-### Autenticados (Bearer JWT)
+### Admin (requer perfil superadmin)
 | Método | Endpoint | Descrição |
 |--------|----------|-----------|
-| GET | `/api/dashboard/overview` | KPIs gerais |
-| GET | `/api/dashboard/ranking` | Rankings (?tipo=risco/velocidade/ociosidade) |
+| GET | `/api/admin/dashboard` | Métricas gerais |
+| GET | `/api/admin/clientes` | Listar clientes (paginado, busca, filtro) |
+| POST | `/api/admin/clientes` | Criar novo cliente |
+| PUT | `/api/admin/clientes/:id` | Atualizar cliente |
+| DELETE | `/api/admin/clientes/:id` | Desativar cliente |
+| POST | `/api/admin/clientes/:id/reativar` | Reativar cliente |
+| GET | `/api/admin/clientes/:id/usuarios` | Usuários do tenant |
+| POST | `/api/admin/clientes/:id/usuarios` | Criar usuário no tenant |
+| PUT | `/api/admin/usuarios/:id` | Atualizar usuário |
+| GET | `/api/admin/planos` | Listar planos disponíveis |
+
+### Dashboard do Tenant
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| GET | `/api/dashboard/overview` | KPIs da frota |
 | GET | `/api/dashboard/timeline` | Eventos recentes |
-| GET | `/api/dashboard/alertas` | Lista de alertas |
+| GET | `/api/dashboard/alertas` | Alertas ativos |
+| GET | `/api/dashboard/stats-hora` | Atividade por hora |
+| GET | `/api/dashboard/ranking` | Ranking de veículos |
 | GET | `/api/veiculos` | Lista de veículos |
-| GET | `/api/veiculos/mapa/posicoes` | Posições para mapa |
-| GET | `/api/veiculos/:id` | Detalhes de veículo |
-| POST | `/api/sync/coletar` | Forçar coleta manual |
-| POST | `/api/sync/veiculos` | Sincronizar frota |
-| POST | `/api/sync/credentials` | Salvar credenciais Multiportal |
-| POST | `/api/sync/test-connection` | Testar conexão Multiportal |
-| GET | `/api/sync/logs` | Logs de coleta |
+| GET | `/api/veiculos/mapa/posicoes` | Posições para o mapa |
 
 ---
 
-## 🧠 Motor de Risk Score
+## 🗄️ Banco de Dados (Migrations)
 
-### Critérios de Pontuação
-| Condição | Pontos |
-|----------|--------|
-| Velocidade > 140km/h | +45 |
-| Velocidade > 110km/h | +30 |
-| Velocidade > 60km/h | +15 |
-| Evento crítico (pânico, jammer) | +40-50 |
-| Evento de alerta (frenagem, curva) | +20-25 |
-| Ociosidade > 60min | +20 |
-| Frequência alta de eventos | +10-20 |
-| **Decaimento gradual** | -20% por ciclo sem eventos |
-
-### Classificação
-- 🟢 **0-30**: Baixo Risco
-- 🟡 **31-60**: Risco Moderado
-- 🔴 **61-100**: Alto Risco
+| Arquivo | Descrição |
+|---------|-----------|
+| `0001_initial_schema.sql` | Schema completo (tenants, usuarios, veiculos, motoristas, eventos, posicoes, alertas, logs_coleta) |
+| `0002_seed.sql` | Dados iniciais e eventos padrão |
+| `0003_admin_clientes.sql` | Campos estendidos (CNPJ, telefone, endereço, contrato), tabelas `planos` e `admins` |
 
 ---
 
-## 🏗 Arquitetura Técnica
+## 🚀 Deploy
 
-```
-fleet-bridge/
-├── src/
-│   ├── index.tsx          # App principal Hono + páginas HTML
-│   ├── types/index.ts     # TypeScript types
-│   ├── middleware/auth.ts # JWT middleware
-│   ├── routes/
-│   │   ├── auth.ts        # Login/Registro
-│   │   ├── veiculos.ts    # CRUD veículos
-│   │   ├── dashboard.ts   # KPIs e métricas
-│   │   └── sync.ts        # Integração Multiportal
-│   ├── services/
-│   │   ├── multiportal.ts # Cliente API Multiportal
-│   │   └── worker.ts      # Worker coleta real-time
-│   └── utils/
-│       ├── riskScore.ts   # Motor de risco
-│       └── helpers.ts     # JWT, hash, formatação
-├── migrations/            # Schema D1
-└── ecosystem.config.cjs   # PM2 config
-```
-
----
-
-## 📊 Banco de Dados (Cloudflare D1)
-
-### Tabelas
-- `tenants` - Empresas clientes
-- `usuarios` - Usuários por tenant
-- `veiculos` - Frota sincronizada da Multiportal
-- `motoristas` - Motoristas da Multiportal
-- `eventos` - Catálogo de eventos com pesos de risco
-- `posicoes` - Telemetria GPS (tabela crítica)
-- `alertas` - Alertas gerados automaticamente
-- `logs_coleta` - Logs de cada ciclo de coleta
-
----
-
-## 🚀 Como Usar
-
-### 1. Setup inicial
+### Produção
 ```bash
-npm install
 npm run build
-npm run db:migrate:local
-pm2 start ecosystem.config.cjs
+npx wrangler pages deploy dist --project-name fleet-bridge
+npx wrangler d1 migrations apply fleet-bridge-production --remote
 ```
 
-### 2. Conectar Multiportal
-1. Acesse `/login` com credenciais demo
-2. Clique em **"Conectar"** no header
-3. Informe usuário/senha/appid da Multiportal
-4. Clique em **"Testar e Salvar"**
-5. Aguarde sincronização automática
-
-### 3. Coleta em tempo real
-- A coleta pode ser acionada manualmente pelo botão **"Atualizar"**
-- O endpoint `/api/internal/collect` pode ser agendado externamente (cron)
-- Recomendado: chamar a cada 10-20 segundos via cron externo
-
----
-
-## ⚙️ Configuração para Produção (Cloudflare Pages)
-
+### Local (Sandbox)
 ```bash
-# 1. Criar banco D1
-npx wrangler d1 create fleet-bridge-production
-
-# 2. Atualizar wrangler.jsonc com o database_id real
-
-# 3. Aplicar migrations em produção
-npx wrangler d1 migrations apply fleet-bridge-production
-
-# 4. Deploy
-npm run deploy:prod
+npm run build
+pm2 start ecosystem.config.cjs
+npx wrangler d1 migrations apply fleet-bridge-production --local
 ```
 
----
-
-## 📦 Stack Tecnológica
-- **Backend**: Hono (TypeScript) no Cloudflare Workers
-- **Banco**: Cloudflare D1 (SQLite distribuído)
-- **Frontend**: HTML/TailwindCSS/Vanilla JS
-- **Mapa**: Leaflet.js
-- **Gráficos**: Chart.js
-- **Autenticação**: JWT (HS256 via Web Crypto API)
+### Status
+- **Plataforma**: Cloudflare Pages ✅
+- **Banco (D1)**: fleet-bridge-production ✅
+- **Última atualização**: 2026-03-06
+- **Commit**: 85b6d6e
 
 ---
 
-**Versão**: 1.0.0 | **Última atualização**: 28/02/2026
+## 📋 Próximos Passos Sugeridos
+
+- [ ] Dashboard de relatórios (exportação PDF/Excel)
+- [ ] Notificações por e-mail (alertas críticos)
+- [ ] App mobile (PWA)
+- [ ] API pública com autenticação por API key
+- [ ] Integração com mais rastreadores (além do Multiportal)
+- [ ] Painel financeiro (controle de faturas/cobranças)
+- [ ] Geofences configuráveis por tenant

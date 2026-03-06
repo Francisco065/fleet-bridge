@@ -7,8 +7,9 @@ import authRoutes from './routes/auth'
 import veiculosRoutes from './routes/veiculos'
 import dashboardRoutes from './routes/dashboard'
 import syncRoutes from './routes/sync'
+import adminRoutes from './routes/admin'
 import { coletarTodosTenants } from './services/worker'
-import { hashPassword } from './utils/helpers'
+import { hashPassword, generateJWT, verifyJWT } from './utils/helpers'
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 
@@ -59,6 +60,15 @@ app.post('/api/setup', async (c) => {
     await c.env.DB.prepare(`INSERT OR IGNORE INTO usuarios (tenant_id,nome,email,senha_hash,perfil) VALUES (1,'Administrador','admin@fleetbridge.com.br',?,'admin')`).bind(senhaHash).run()
     // Garantir que a senha do admin demo está sempre com hash correto
     await c.env.DB.prepare(`UPDATE usuarios SET senha_hash = ? WHERE email = 'admin@fleetbridge.com.br' AND length(senha_hash) < 20`).bind(senhaHash).run()
+    // Criar tabela admins e superadmin padrão
+    await c.env.DB.prepare(`CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY AUTOINCREMENT,nome TEXT NOT NULL,email TEXT UNIQUE NOT NULL,senha_hash TEXT NOT NULL,ativo INTEGER DEFAULT 1,ultimo_login DATETIME,criado_em DATETIME DEFAULT CURRENT_TIMESTAMP)`).run()
+    const superHash = await hashPassword('admin@2024')
+    await c.env.DB.prepare(`INSERT OR IGNORE INTO admins (nome,email,senha_hash) VALUES ('Superadmin','superadmin@fleetbridge.com.br',?)`).bind(superHash).run()
+    // Criar tabela planos se não existir
+    await c.env.DB.prepare(`CREATE TABLE IF NOT EXISTS planos (id INTEGER PRIMARY KEY AUTOINCREMENT,codigo TEXT UNIQUE NOT NULL,nome TEXT NOT NULL,descricao TEXT,max_veiculos INTEGER DEFAULT 10,max_usuarios INTEGER DEFAULT 3,preco_mensal REAL DEFAULT 0,features TEXT,ativo INTEGER DEFAULT 1,criado_em DATETIME DEFAULT CURRENT_TIMESTAMP)`).run()
+    await c.env.DB.prepare(`INSERT OR IGNORE INTO planos (codigo,nome,descricao,max_veiculos,max_usuarios,preco_mensal,features) VALUES ('basico','Básico','Até 10 veículos',10,3,199.90,'["dashboard","mapa","alertas"]')`).run()
+    await c.env.DB.prepare(`INSERT OR IGNORE INTO planos (codigo,nome,descricao,max_veiculos,max_usuarios,preco_mensal,features) VALUES ('profissional','Profissional','Até 50 veículos',50,10,499.90,'["dashboard","mapa","alertas","relatorios","ranking","api"]')`).run()
+    await c.env.DB.prepare(`INSERT OR IGNORE INTO planos (codigo,nome,descricao,max_veiculos,max_usuarios,preco_mensal,features) VALUES ('enterprise','Enterprise','Veículos ilimitados',999,100,1299.90,'["dashboard","mapa","alertas","relatorios","ranking","api","suporte","white-label"]')`).run()
     // Eventos padrão
     const eventos = [
       ['1','Ignição Ligada',0,'info'],['2','Ignição Desligada',0,'info'],['3','Excesso de Velocidade',35,'critico'],
@@ -113,7 +123,62 @@ app.post('/api/internal/collect', async (c) => {
 })
 
 // ============================================================
-// ROTAS AUTENTICADAS
+// AUTENTICAÇÃO DE SUPERADMIN
+// ============================================================
+
+// POST /api/admin/auth/login - Login exclusivo para superadmin
+app.post('/api/admin/auth/login', async (c) => {
+  try {
+    const { email, senha } = await c.req.json()
+    if (!email || !senha) return c.json({ error: 'Email e senha obrigatórios' }, 400)
+
+    const admin = await c.env.DB.prepare(
+      'SELECT * FROM admins WHERE email = ? AND ativo = 1'
+    ).bind(email.toLowerCase().trim()).first<any>()
+
+    if (!admin) return c.json({ error: 'Credenciais inválidas' }, 401)
+
+    const { verifyPassword } = await import('./utils/helpers')
+    const valida = await verifyPassword(senha, admin.senha_hash) ||
+      (admin.senha_hash.length < 20 && senha === admin.senha_hash)
+
+    if (!valida) return c.json({ error: 'Credenciais inválidas' }, 401)
+
+    const secret = c.env.JWT_SECRET || 'fleetbridge_jwt_secret_2024'
+    const token = await generateJWT(
+      { sub: String(admin.id), email: admin.email, nome: admin.nome, perfil: 'superadmin', tid: 0 },
+      secret, 8
+    )
+
+    await c.env.DB.prepare('UPDATE admins SET ultimo_login = datetime("now") WHERE id = ?').bind(admin.id).run()
+
+    return c.json({ token, admin: { id: admin.id, nome: admin.nome, email: admin.email, perfil: 'superadmin' } })
+  } catch (err) {
+    console.error('[Admin Auth]', err)
+    return c.json({ error: 'Erro interno' }, 500)
+  }
+})
+
+// Middleware de autenticação para rotas /api/admin/*
+app.use('/api/admin/*', async (c, next) => {
+  const authHeader = c.req.header('Authorization')
+  const token = authHeader?.replace('Bearer ', '')
+  if (!token) return c.json({ error: 'Token necessário' }, 401)
+
+  const secret = c.env.JWT_SECRET || 'fleetbridge_jwt_secret_2024'
+  const payload = await verifyJWT(token, secret)
+  if (!payload) return c.json({ error: 'Token inválido ou expirado' }, 401)
+  if ((payload as any).perfil !== 'superadmin') return c.json({ error: 'Acesso restrito a administradores' }, 403)
+
+  c.set('jwtPayload', payload as any)
+  await next()
+})
+
+// Rotas de administração
+app.route('/api/admin', adminRoutes)
+
+// ============================================================
+// ROTAS AUTENTICADAS (tenant)
 // ============================================================
 app.use('/api/*', authMiddleware)
 
@@ -145,16 +210,19 @@ app.get('/api/usuario', async (c) => {
 // PÁGINAS HTML - Single Page Application
 // ============================================================
 
-// Página de Login
-app.get('/login', (c) => {
-  return c.html(getLoginPage())
-})
+// Página de Login do sistema
+app.get('/login', (c) => c.html(getLoginPage()))
 
-// Dashboard principal (SPA)
-app.get('/', (c) => {
-  return c.html(getDashboardPage())
-})
+// Página de Login do Admin
+app.get('/admin/login', (c) => c.html(getAdminLoginPage()))
 
+// Painel de Administração
+app.get('/admin', (c) => c.html(getAdminPage()))
+app.get('/admin/clientes', (c) => c.redirect('/admin'))
+app.get('/admin/usuarios', (c) => c.redirect('/admin'))
+
+// Dashboard do tenant (SPA)
+app.get('/', (c) => c.html(getDashboardPage()))
 app.get('/app', (c) => c.redirect('/'))
 app.get('/dashboard', (c) => c.redirect('/'))
 app.get('/veiculos', (c) => c.redirect('/'))
@@ -688,6 +756,583 @@ function getDashboardPage(): string {
   </div>
 
   <script src="/static/dashboard.js"><\/script>
+</body>
+</html>`
+}
+
+// ============================================================
+// ADMIN LOGIN PAGE
+// ============================================================
+function getAdminLoginPage(): string {
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fleet Bridge · Administração</title>
+  <script src="https://cdn.tailwindcss.com"><\/script>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: 'Inter', system-ui, sans-serif; background: #030712; min-height:100vh; display:flex; align-items:center; justify-content:center; }
+    .glass { background: rgba(15,23,42,0.85); backdrop-filter: blur(24px); border: 1px solid rgba(148,163,184,0.08); border-radius: 24px; }
+    .btn { width:100%; padding:12px; border-radius:12px; border:none; cursor:pointer; font-size:14px; font-weight:600; transition:all .2s; }
+    .btn-admin { background: linear-gradient(135deg, #dc2626, #991b1b); color:#fff; }
+    .btn-admin:hover { background: linear-gradient(135deg, #b91c1c, #7f1d1d); transform:translateY(-1px); }
+    .inp { width:100%; background:rgba(2,6,23,0.7); border:1px solid rgba(148,163,184,0.12); border-radius:10px; padding:11px 14px; color:#f1f5f9; font-size:13px; outline:none; transition:border .2s; }
+    .inp:focus { border-color:#dc2626; box-shadow:0 0 0 3px rgba(220,38,38,0.12); }
+    .alert { border-radius:10px; padding:10px 14px; font-size:13px; margin-bottom:16px; display:none; }
+    .alert-error { background:rgba(220,38,38,0.12); border:1px solid rgba(220,38,38,0.25); color:#f87171; }
+    .bg-grid { position:fixed; inset:0; background-image: radial-gradient(circle at 20% 50%, rgba(220,38,38,0.06) 0%, transparent 50%), radial-gradient(circle at 80% 20%, rgba(239,68,68,0.04) 0%, transparent 40%); pointer-events:none; }
+  </style>
+</head>
+<body>
+  <div class="bg-grid"></div>
+  <div class="glass w-full max-w-sm mx-4 p-8">
+    <div class="flex flex-col items-center mb-8">
+      <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-red-600 to-red-900 flex items-center justify-center shadow-lg mb-4">
+        <i class="fas fa-shield-alt text-white text-xl"></i>
+      </div>
+      <h1 class="text-xl font-bold text-white">Painel Administrativo</h1>
+      <p class="text-xs text-slate-500 mt-1">Fleet Bridge · Acesso restrito</p>
+    </div>
+
+    <div id="alert" class="alert alert-error"><i class="fas fa-exclamation-circle mr-2"></i><span id="alert-msg"></span></div>
+
+    <form id="form" class="space-y-4">
+      <div>
+        <label class="block text-xs text-slate-400 mb-1.5 font-medium">E-mail do administrador</label>
+        <input type="email" id="email" class="inp" placeholder="admin@fleetbridge.com.br" required autocomplete="email">
+      </div>
+      <div class="relative">
+        <label class="block text-xs text-slate-400 mb-1.5 font-medium">Senha</label>
+        <input type="password" id="senha" class="inp" placeholder="••••••••" required autocomplete="current-password">
+        <button type="button" onclick="toggleSenha()" class="absolute right-3 top-8 text-slate-500 hover:text-slate-300">
+          <i class="fas fa-eye text-xs" id="eye-icon"></i>
+        </button>
+      </div>
+      <button type="submit" class="btn btn-admin mt-2" id="btn-login">
+        <i class="fas fa-lock mr-2"></i>Entrar no Painel
+      </button>
+    </form>
+
+    <div class="mt-6 text-center">
+      <a href="/login" class="text-xs text-slate-600 hover:text-slate-400 transition">
+        <i class="fas fa-arrow-left mr-1"></i>Voltar ao login de clientes
+      </a>
+    </div>
+  </div>
+
+  <script>
+    function toggleSenha() {
+      var inp = document.getElementById('senha');
+      var ico = document.getElementById('eye-icon');
+      if (inp.type === 'password') { inp.type = 'text'; ico.className = 'fas fa-eye-slash text-xs'; }
+      else { inp.type = 'password'; ico.className = 'fas fa-eye text-xs'; }
+    }
+
+    document.getElementById('form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      var btn = document.getElementById('btn-login');
+      var alertEl = document.getElementById('alert');
+      alertEl.style.display = 'none';
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Autenticando...';
+
+      try {
+        var res = await fetch('/api/admin/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: document.getElementById('email').value,
+            senha: document.getElementById('senha').value
+          })
+        });
+        var data = await res.json();
+        if (res.ok && data.token) {
+          localStorage.setItem('admin_token', data.token);
+          localStorage.setItem('admin_user', JSON.stringify(data.admin));
+          window.location.href = '/admin';
+        } else {
+          document.getElementById('alert-msg').textContent = data.error || 'Erro ao autenticar';
+          alertEl.style.display = 'block';
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fas fa-lock mr-2"></i>Entrar no Painel';
+        }
+      } catch(err) {
+        document.getElementById('alert-msg').textContent = 'Erro de conexão. Tente novamente.';
+        alertEl.style.display = 'block';
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-lock mr-2"></i>Entrar no Painel';
+      }
+    });
+  </script>
+</body>
+</html>`
+}
+
+// ============================================================
+// ADMIN PANEL PAGE
+// ============================================================
+function getAdminPage(): string {
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fleet Bridge · Gestão de Clientes</title>
+  <script src="https://cdn.tailwindcss.com"><\/script>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"><\/script>
+  <style>
+    :root { --bg: #030712; --card: #0f172a; --card2: #111827; --border: rgba(148,163,184,0.08); --red: #dc2626; --red-light: rgba(220,38,38,0.12); }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:'Inter',system-ui,sans-serif; background:var(--bg); color:#f1f5f9; min-height:100vh; }
+    ::-webkit-scrollbar { width:5px; } ::-webkit-scrollbar-track { background:#0f172a; } ::-webkit-scrollbar-thumb { background:#1e293b; border-radius:3px; }
+    .sidebar { width:240px; background:var(--card); border-right:1px solid var(--border); height:100vh; position:fixed; left:0; top:0; display:flex; flex-direction:column; z-index:100; }
+    .main { margin-left:240px; min-height:100vh; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:16px; }
+    .card2 { background:var(--card2); border:1px solid var(--border); border-radius:12px; }
+    .badge { display:inline-flex; align-items:center; padding:2px 10px; border-radius:999px; font-size:11px; font-weight:600; }
+    .badge-green  { background:rgba(16,185,129,.12); color:#34d399; }
+    .badge-red    { background:rgba(220,38,38,.12);  color:#f87171; }
+    .badge-yellow { background:rgba(245,158,11,.12); color:#fbbf24; }
+    .badge-blue   { background:rgba(59,130,246,.12); color:#60a5fa; }
+    .badge-purple { background:rgba(139,92,246,.12); color:#a78bfa; }
+    .btn-primary { background:linear-gradient(135deg,#dc2626,#991b1b); color:#fff; border:none; padding:8px 16px; border-radius:9px; cursor:pointer; font-size:13px; font-weight:600; transition:all .2s; display:inline-flex; align-items:center; gap:6px; }
+    .btn-primary:hover { opacity:.9; transform:translateY(-1px); }
+    .btn-ghost { background:transparent; color:#94a3b8; border:1px solid var(--border); padding:7px 14px; border-radius:9px; cursor:pointer; font-size:12px; transition:all .2s; display:inline-flex; align-items:center; gap:6px; }
+    .btn-ghost:hover { border-color:#dc2626; color:#f1f5f9; }
+    .btn-sm { padding:5px 12px; font-size:11px; border-radius:7px; }
+    .nav-item { display:flex; align-items:center; gap:10px; padding:9px 14px; border-radius:9px; cursor:pointer; font-size:13px; font-weight:500; color:#94a3b8; transition:all .2s; margin:2px 8px; text-decoration:none; }
+    .nav-item:hover { background:var(--red-light); color:#fca5a5; }
+    .nav-item.active { background:var(--red-light); color:#f87171; }
+    .inp { width:100%; background:#030712; border:1px solid var(--border); border-radius:9px; padding:9px 12px; color:#f1f5f9; font-size:13px; outline:none; transition:border .2s; }
+    .inp:focus { border-color:var(--red); box-shadow:0 0 0 3px rgba(220,38,38,.1); }
+    .inp-sm { padding:6px 10px; font-size:12px; border-radius:7px; }
+    select.inp { cursor:pointer; }
+    .section { display:none; } .section.active { display:block; }
+    .modal { display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,.75); backdrop-filter:blur(6px); align-items:center; justify-content:center; overflow-y:auto; padding:20px; }
+    .modal.open { display:flex; }
+    .modal-box { background:var(--card); border:1px solid var(--border); border-radius:20px; padding:28px; width:100%; max-width:680px; max-height:90vh; overflow-y:auto; }
+    .tab-btn { padding:7px 14px; border-radius:7px; font-size:12px; font-weight:500; cursor:pointer; transition:all .2s; background:transparent; color:#94a3b8; border:none; }
+    .tab-btn.active { background:var(--red-light); color:#f87171; }
+    .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+    .form-grid.cols3 { grid-template-columns:1fr 1fr 1fr; }
+    .form-group { display:flex; flex-direction:column; gap:5px; }
+    .form-group.full { grid-column:1/-1; }
+    label.form-label { font-size:11px; color:#64748b; font-weight:500; }
+    .table-row:hover { background:rgba(220,38,38,0.03); }
+    tr.table-row { border-bottom:1px solid var(--border); }
+    .stat-card { border-radius:16px; padding:20px; position:relative; overflow:hidden; }
+    .kpi-icon { width:38px; height:38px; border-radius:10px; display:flex; align-items:center; justify-content:center; }
+    .loader { border:3px solid rgba(220,38,38,0.2); border-top-color:#dc2626; border-radius:50%; width:22px; height:22px; animation:spin .8s linear infinite; display:inline-block; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    @media(max-width:768px) { .sidebar { transform:translateX(-240px); } .sidebar.open { transform:translateX(0); } .main { margin-left:0; } .form-grid { grid-template-columns:1fr; } }
+    .search-box { background:#030712; border:1px solid var(--border); border-radius:9px; padding:8px 12px 8px 34px; color:#f1f5f9; font-size:13px; outline:none; width:220px; }
+    .search-box:focus { border-color:var(--red); }
+    .empty-state { display:flex; flex-direction:column; align-items:center; padding:60px 20px; gap:12px; }
+  </style>
+</head>
+<body>
+
+  <!-- Sidebar -->
+  <nav class="sidebar" id="sidebar">
+    <div class="p-5 border-b border-slate-800/50">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-red-600 to-red-900 flex items-center justify-center shadow-lg">
+          <i class="fas fa-shield-alt text-white text-sm"></i>
+        </div>
+        <div>
+          <div class="font-bold text-white text-sm">Fleet Bridge</div>
+          <div class="text-xs text-red-400 font-semibold">Administração</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex-1 overflow-y-auto py-3 px-1">
+      <div class="px-4 py-2 text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Menu</div>
+      <a class="nav-item active" onclick="showSection('dashboard')" href="#dashboard">
+        <i class="fas fa-chart-pie w-4 text-center"></i><span>Visão Geral</span>
+      </a>
+      <a class="nav-item" onclick="showSection('clientes')" href="#clientes">
+        <i class="fas fa-building w-4 text-center"></i><span>Clientes</span>
+        <span id="badge-total" class="ml-auto badge badge-red text-xs hidden">0</span>
+      </a>
+      <a class="nav-item" onclick="showSection('planos')" href="#planos">
+        <i class="fas fa-layer-group w-4 text-center"></i><span>Planos</span>
+      </a>
+    </div>
+
+    <div class="p-4 border-t border-slate-800/50">
+      <div class="flex items-center gap-3 mb-3">
+        <div class="w-8 h-8 rounded-lg bg-red-900/50 flex items-center justify-center">
+          <i class="fas fa-user-shield text-red-400 text-xs"></i>
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="text-xs font-medium text-slate-300 truncate" id="admin-nome">Admin</div>
+          <div class="text-xs text-red-400">Superadmin</div>
+        </div>
+      </div>
+      <button onclick="adminLogout()" class="w-full text-xs text-slate-500 hover:text-red-400 transition flex items-center justify-center gap-2 py-1.5">
+        <i class="fas fa-sign-out-alt"></i> Sair
+      </button>
+    </div>
+  </nav>
+
+  <!-- Main -->
+  <main class="main">
+    <header class="h-14 bg-slate-950/80 backdrop-blur-sm border-b border-slate-800/50 flex items-center px-5 sticky top-0 z-50">
+      <button class="md:hidden mr-3 text-slate-400" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
+      <h1 class="text-sm font-semibold text-white" id="page-title">Visão Geral</h1>
+      <div class="ml-auto flex items-center gap-3">
+        <button onclick="showModal('modal-novo-cliente')" class="btn-primary text-xs py-1.5">
+          <i class="fas fa-plus"></i><span class="hidden sm:inline">Novo Cliente</span>
+        </button>
+      </div>
+    </header>
+
+    <div class="p-5 md:p-6">
+
+      <!-- ===== DASHBOARD GERAL ===== -->
+      <section id="sec-dashboard" class="section active">
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6" id="kpi-grid">
+          <div class="stat-card card" style="background:linear-gradient(135deg,#0f172a,#1c0505)">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs text-slate-400">Clientes Ativos</span>
+              <div class="kpi-icon bg-red-500/15"><i class="fas fa-building text-red-400 text-xs"></i></div>
+            </div>
+            <div class="text-3xl font-bold text-white" id="k-ativos">-</div>
+            <div class="text-xs text-slate-500 mt-1">empresas cadastradas</div>
+          </div>
+          <div class="stat-card card" style="background:linear-gradient(135deg,#0f172a,#05131c)">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs text-slate-400">Total Usuários</span>
+              <div class="kpi-icon bg-blue-500/15"><i class="fas fa-users text-blue-400 text-xs"></i></div>
+            </div>
+            <div class="text-3xl font-bold text-blue-400" id="k-usuarios">-</div>
+            <div class="text-xs text-slate-500 mt-1">acessos ativos</div>
+          </div>
+          <div class="stat-card card" style="background:linear-gradient(135deg,#0f172a,#0a1a06)">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs text-slate-400">Total Veículos</span>
+              <div class="kpi-icon bg-green-500/15"><i class="fas fa-car text-green-400 text-xs"></i></div>
+            </div>
+            <div class="text-3xl font-bold text-green-400" id="k-veiculos">-</div>
+            <div class="text-xs text-slate-500 mt-1">monitorados</div>
+          </div>
+          <div class="stat-card card" style="background:linear-gradient(135deg,#0f172a,#0f0a1a)">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs text-slate-400">Novos (30d)</span>
+              <div class="kpi-icon bg-purple-500/15"><i class="fas fa-user-plus text-purple-400 text-xs"></i></div>
+            </div>
+            <div class="text-3xl font-bold" style="color:#a78bfa" id="k-novos">-</div>
+            <div class="text-xs text-slate-500 mt-1">novos clientes</div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-6">
+          <!-- Por plano -->
+          <div class="card p-5">
+            <h3 class="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+              <i class="fas fa-layer-group text-red-400"></i> Distribuição por Plano
+            </h3>
+            <div id="dist-planos" class="space-y-3">
+              <div class="loader mx-auto"></div>
+            </div>
+          </div>
+          <!-- Últimos clientes -->
+          <div class="card p-5">
+            <h3 class="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+              <i class="fas fa-clock text-blue-400"></i> Últimos Cadastros
+            </h3>
+            <div id="ultimos-clientes" class="space-y-2">
+              <div class="loader mx-auto"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== CLIENTES ===== -->
+      <section id="sec-clientes" class="section">
+        <!-- Toolbar -->
+        <div class="flex flex-wrap items-center gap-3 mb-5">
+          <div class="relative flex-1 min-w-[200px]">
+            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-600 text-xs"></i>
+            <input type="text" id="search-input" class="search-box w-full" placeholder="Buscar empresa, CNPJ, responsável...">
+          </div>
+          <select id="filter-status" class="inp inp-sm" style="width:auto">
+            <option value="">Todos os status</option>
+            <option value="ativo">Ativo</option>
+            <option value="inativo">Inativo</option>
+          </select>
+          <select id="filter-plano" class="inp inp-sm" style="width:auto">
+            <option value="">Todos os planos</option>
+            <option value="basico">Básico</option>
+            <option value="profissional">Profissional</option>
+            <option value="enterprise">Enterprise</option>
+          </select>
+          <button onclick="loadClientes()" class="btn-ghost btn-sm"><i class="fas fa-sync-alt"></i> Atualizar</button>
+          <button onclick="showModal('modal-novo-cliente')" class="btn-primary btn-sm"><i class="fas fa-plus"></i> Novo Cliente</button>
+        </div>
+
+        <!-- Tabela -->
+        <div class="card overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full">
+              <thead>
+                <tr class="border-b border-slate-800/60">
+                  <th class="text-left p-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Empresa</th>
+                  <th class="text-left p-4 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden md:table-cell">Responsável</th>
+                  <th class="text-left p-4 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden lg:table-cell">Plano</th>
+                  <th class="text-left p-4 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden lg:table-cell">Veículos</th>
+                  <th class="text-left p-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
+                  <th class="text-left p-4 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden md:table-cell">Cadastro</th>
+                  <th class="p-4"></th>
+                </tr>
+              </thead>
+              <tbody id="clientes-tbody">
+                <tr><td colspan="7" class="text-center p-10"><div class="loader mx-auto"></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <!-- Paginação -->
+          <div id="pagination" class="flex items-center justify-between p-4 border-t border-slate-800/50 text-xs text-slate-500">
+            <span id="pagination-info">-</span>
+            <div class="flex gap-2" id="pagination-btns"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== PLANOS ===== -->
+      <section id="sec-planos" class="section">
+        <div id="planos-grid" class="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <div class="loader mx-auto col-span-3 mt-10"></div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- ===== MODAL: NOVO / EDITAR CLIENTE ===== -->
+  <div class="modal" id="modal-novo-cliente">
+    <div class="modal-box">
+      <div class="flex items-center justify-between mb-6">
+        <h2 class="text-base font-semibold text-white flex items-center gap-2">
+          <i class="fas fa-building text-red-400"></i>
+          <span id="modal-title">Novo Cliente</span>
+        </h2>
+        <button onclick="closeModal('modal-novo-cliente')" class="text-slate-500 hover:text-white transition"><i class="fas fa-times"></i></button>
+      </div>
+
+      <!-- Abas -->
+      <div class="flex gap-1 mb-6 border-b border-slate-800 pb-3">
+        <button class="tab-btn active" onclick="showTab('empresa')" id="tab-empresa">
+          <i class="fas fa-building mr-1"></i>Empresa
+        </button>
+        <button class="tab-btn" onclick="showTab('responsavel')" id="tab-responsavel">
+          <i class="fas fa-user-tie mr-1"></i>Responsável
+        </button>
+        <button class="tab-btn" onclick="showTab('endereco')" id="tab-endereco">
+          <i class="fas fa-map-marker-alt mr-1"></i>Endereço
+        </button>
+        <button class="tab-btn" onclick="showTab('contrato')" id="tab-contrato">
+          <i class="fas fa-file-contract mr-1"></i>Contrato
+        </button>
+      </div>
+
+      <form id="form-cliente">
+        <input type="hidden" id="cliente-id">
+
+        <!-- ABA: EMPRESA -->
+        <div id="tab-content-empresa" class="tab-content">
+          <div class="form-grid">
+            <div class="form-group full">
+              <label class="form-label">Razão Social / Nome da Empresa *</label>
+              <input type="text" id="f-nome" class="inp" placeholder="Ex: Transportes Silva Ltda" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label">CNPJ</label>
+              <input type="text" id="f-cnpj" class="inp" placeholder="00.000.000/0001-00" maxlength="18">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Telefone Comercial</label>
+              <input type="text" id="f-telefone" class="inp" placeholder="(11) 99999-9999">
+            </div>
+            <div class="form-group">
+              <label class="form-label">E-mail de Acesso *</label>
+              <input type="email" id="f-email" class="inp" placeholder="admin@empresa.com.br" required>
+            </div>
+            <div class="form-group" id="senha-group">
+              <label class="form-label">Senha de Acesso *</label>
+              <input type="password" id="f-senha" class="inp" placeholder="Mínimo 6 caracteres">
+            </div>
+          </div>
+        </div>
+
+        <!-- ABA: RESPONSÁVEL -->
+        <div id="tab-content-responsavel" class="tab-content hidden">
+          <div class="form-grid">
+            <div class="form-group full">
+              <label class="form-label">Nome do Responsável *</label>
+              <input type="text" id="f-resp-nome" class="inp" placeholder="Nome completo do responsável">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Cargo / Função</label>
+              <input type="text" id="f-resp-cargo" class="inp" placeholder="Ex: Gerente de Frota">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Telefone do Responsável</label>
+              <input type="text" id="f-resp-telefone" class="inp" placeholder="(11) 99999-9999">
+            </div>
+          </div>
+          <div class="mt-4 p-4 rounded-xl" style="background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.12)">
+            <p class="text-xs text-blue-400 flex items-start gap-2">
+              <i class="fas fa-info-circle mt-0.5 flex-shrink-0"></i>
+              O responsável será vinculado como usuário <strong>admin</strong> da empresa, com acesso ao e-mail cadastrado na aba Empresa.
+            </p>
+          </div>
+        </div>
+
+        <!-- ABA: ENDEREÇO -->
+        <div id="tab-content-endereco" class="tab-content hidden">
+          <div class="form-grid">
+            <div class="form-group">
+              <label class="form-label">CEP</label>
+              <input type="text" id="f-cep" class="inp" placeholder="00000-000" maxlength="9" oninput="buscaCep(this.value)">
+            </div>
+            <div class="form-group full">
+              <label class="form-label">Logradouro</label>
+              <input type="text" id="f-logradouro" class="inp" placeholder="Rua, Av., etc.">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Número</label>
+              <input type="text" id="f-numero" class="inp" placeholder="Nº">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Complemento</label>
+              <input type="text" id="f-complemento" class="inp" placeholder="Sala, Bloco...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Bairro</label>
+              <input type="text" id="f-bairro" class="inp" placeholder="Bairro">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Cidade</label>
+              <input type="text" id="f-cidade" class="inp" placeholder="Cidade">
+            </div>
+            <div class="form-group">
+              <label class="form-label">UF</label>
+              <select id="f-uf" class="inp">
+                <option value="">Selecione</option>
+                <option>AC</option><option>AL</option><option>AP</option><option>AM</option>
+                <option>BA</option><option>CE</option><option>DF</option><option>ES</option>
+                <option>GO</option><option>MA</option><option>MT</option><option>MS</option>
+                <option>MG</option><option>PA</option><option>PB</option><option>PR</option>
+                <option>PE</option><option>PI</option><option>RJ</option><option>RN</option>
+                <option>RS</option><option>RO</option><option>RR</option><option>SC</option>
+                <option selected>SP</option><option>SE</option><option>TO</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- ABA: CONTRATO -->
+        <div id="tab-content-contrato" class="tab-content hidden">
+          <div class="form-grid">
+            <div class="form-group">
+              <label class="form-label">Plano Contratado *</label>
+              <select id="f-plano" class="inp">
+                <option value="basico">Básico — até 10 veículos</option>
+                <option value="profissional">Profissional — até 50 veículos</option>
+                <option value="enterprise">Enterprise — ilimitado</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Qtd. Veículos no Contrato</label>
+              <input type="number" id="f-qtd-veiculos" class="inp" placeholder="0" min="0">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Data de Contrato</label>
+              <input type="date" id="f-data-contrato" class="inp">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Data de Vencimento</label>
+              <input type="date" id="f-data-vencimento" class="inp">
+            </div>
+            <div class="form-group full">
+              <label class="form-label">Observações Internas</label>
+              <textarea id="f-obs" class="inp" rows="3" placeholder="Informações internas sobre o cliente..."></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- Resultado / Erro -->
+        <div id="form-result" class="hidden mt-4 text-xs p-3 rounded-xl"></div>
+
+        <!-- Botões -->
+        <div class="flex gap-3 pt-5 border-t border-slate-800 mt-5">
+          <button type="submit" class="btn-primary flex-1 justify-center" id="btn-salvar">
+            <i class="fas fa-save"></i> Salvar Cliente
+          </button>
+          <button type="button" onclick="closeModal('modal-novo-cliente')" class="btn-ghost">Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===== MODAL: DETALHE CLIENTE ===== -->
+  <div class="modal" id="modal-detalhe">
+    <div class="modal-box" style="max-width:750px">
+      <div class="flex items-center justify-between mb-5">
+        <h2 class="text-base font-semibold text-white" id="detalhe-titulo">Detalhes do Cliente</h2>
+        <button onclick="closeModal('modal-detalhe')" class="text-slate-500 hover:text-white"><i class="fas fa-times"></i></button>
+      </div>
+      <div id="detalhe-content">
+        <div class="loader mx-auto"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== MODAL: NOVO USUÁRIO ===== -->
+  <div class="modal" id="modal-novo-usuario">
+    <div class="modal-box" style="max-width:440px">
+      <div class="flex items-center justify-between mb-5">
+        <h2 class="text-base font-semibold text-white"><i class="fas fa-user-plus text-green-400 mr-2"></i>Novo Usuário</h2>
+        <button onclick="closeModal('modal-novo-usuario')" class="text-slate-500 hover:text-white"><i class="fas fa-times"></i></button>
+      </div>
+      <form id="form-usuario" class="space-y-4">
+        <input type="hidden" id="nu-tenant-id">
+        <div class="form-group">
+          <label class="form-label">Nome Completo *</label>
+          <input type="text" id="nu-nome" class="inp" placeholder="Nome do usuário" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">E-mail *</label>
+          <input type="email" id="nu-email" class="inp" placeholder="usuario@empresa.com.br" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Senha *</label>
+          <input type="password" id="nu-senha" class="inp" placeholder="Mínimo 6 caracteres" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Perfil</label>
+          <select id="nu-perfil" class="inp">
+            <option value="admin">Administrador</option>
+            <option value="operador" selected>Operador</option>
+            <option value="visualizacao">Somente Visualização</option>
+          </select>
+        </div>
+        <div id="nu-result" class="hidden text-xs p-3 rounded-xl"></div>
+        <div class="flex gap-3 pt-2">
+          <button type="submit" class="btn-primary flex-1 justify-center"><i class="fas fa-save"></i> Criar Usuário</button>
+          <button type="button" onclick="closeModal('modal-novo-usuario')" class="btn-ghost">Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/static/admin.js"><\/script>
 </body>
 </html>`
 }
